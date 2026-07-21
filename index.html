@@ -3958,7 +3958,10 @@ document.getElementById('fVidHowList')?.addEventListener('focusout', async (e)=>
   if(videoId){
     const ytTitle=await fetchYoutubeTitle(videoId);
     const fEnEl=document.getElementById('fEn');
-    if(ytTitle && fEnEl && !fEnEl.value.trim()) fEnEl.value=ytTitle; // only fill if English name is still blank
+    if(ytTitle && fEnEl && !fEnEl.value.trim()){
+      fEnEl.value=ytTitle; // only fill if English name is still blank
+      window.checkSignDataMatch?.(); // re-run the same logic that normally fires on manual typing (letter-rule Handshape + signData lookup)
+    }
   }
   suggestTopicFromInputs();
 });
