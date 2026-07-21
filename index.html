@@ -3952,8 +3952,15 @@ async function suggestTopicFromInputs(){
 }
 
 document.getElementById('fEn')?.addEventListener('blur', suggestTopicFromInputs);
-document.getElementById('fVidHowList')?.addEventListener('focusout', (e)=>{
-  if(e.target.classList.contains('vid-opt-input')) suggestTopicFromInputs();
+document.getElementById('fVidHowList')?.addEventListener('focusout', async (e)=>{
+  if(!e.target.classList.contains('vid-opt-input')) return;
+  const videoId=e.target.value.trim();
+  if(videoId){
+    const ytTitle=await fetchYoutubeTitle(videoId);
+    const fEnEl=document.getElementById('fEn');
+    if(ytTitle && fEnEl && !fEnEl.value.trim()) fEnEl.value=ytTitle; // only fill if English name is still blank
+  }
+  suggestTopicFromInputs();
 });
 
 /* ══ EDIT MODAL ══ */
@@ -4170,7 +4177,7 @@ function buildModalFields(w){
     const lbl=document.createElement('label');
     const isBuiltin=['cat','topic','diff'].includes(def.key);
     const rBadge=def.researcherOnly?`<span class="researcher-badge"><i class="ti ti-microscope" style="font-size:10px;"></i> Researcher only</span>`:'';
-    lbl.innerHTML=`${esc(def.name)}${def.key==='cat'?' *':''} ${rBadge} `;
+    lbl.innerHTML=`${esc(def.name)} ${rBadge} `;
     // Paragraph type: show a textarea, not chips
     if(def.type==='paragraph'){
       fd.appendChild(lbl);
@@ -4224,9 +4231,8 @@ window.closeEditModal=function(){ document.getElementById('editModal').classList
 
 window.saveSign=async function(){
   const en=document.getElementById('fEn').value.trim();
-  const cat=editFormValues.cat||[];
   const hand=editFormValues.hand||[];
-  if(!en||!cat.length||!hand.length){ showToast('Please fill in name, at least one category, and one handshape.'); return; }
+  if(!en||!hand.length){ showToast('Please fill in name and at least one handshape.'); return; }
   const data={
     en, es:document.getElementById('fEs').value.trim(),
     desc:document.getElementById('fDesc').value.trim(),
