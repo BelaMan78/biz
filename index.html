@@ -1070,6 +1070,7 @@ const firebaseConfig = {
   appId: "1:4290375813:web:dde4fa566355e94f7279ec",
   measurementId: "G-QLP7W7R1YH"
 };
+
 /* ══════════════════════════════════════ */
 
 const app  = initializeApp(firebaseConfig);
@@ -3906,6 +3907,54 @@ function buildChips(containerId, values, selected, onToggle, singleSelect=false)
     el.appendChild(chip);
   });
 }
+
+/* ══ AUTO-SUGGEST TOPIC (keyword match on English name + YouTube oEmbed title) ══ */
+// Maintain this table yourself: topic name (must exactly match a value in
+// your Topics collection) → lowercase keywords that should trigger it.
+const TOPIC_KEYWORDS = {
+  'Finance':    ['invoice','payment','tax','budget','bank','loan','salary','accounting'],
+  'Meetings':   ['meeting','agenda','schedule','appointment','conference'],
+  'Technology': ['computer','software','email','password','server','network'],
+  // ...add your real Topic names + keywords here
+};
+
+function guessTopicsFromText(text){
+  const t=(text||'').toLowerCase();
+  return Object.keys(TOPIC_KEYWORDS).filter(topic=>TOPIC_KEYWORDS[topic].some(kw=>t.includes(kw)));
+}
+
+async function fetchYoutubeTitle(videoId){
+  if(!videoId) return '';
+  try{
+    const res=await fetch(`https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`);
+    if(!res.ok) return '';
+    const data=await res.json();
+    return data.title||'';
+  }catch(e){ return ''; }
+}
+
+async function suggestTopicFromInputs(){
+  const chipsEl=document.getElementById('chips_topic');
+  if(!chipsEl) return;
+  if(chipsEl.querySelector('.ms-chip.on')) return; // don't override an existing/manual Topic pick
+
+  const nameText=document.getElementById('fEn').value;
+  const firstYtId=document.querySelector('#fVidHowList .vid-opt-input')?.value?.trim();
+  const ytTitle=firstYtId ? await fetchYoutubeTitle(firstYtId) : '';
+
+  const matched=guessTopicsFromText(nameText+' '+ytTitle);
+  if(!matched.length) return;
+
+  chipsEl.querySelectorAll('.ms-chip').forEach(chip=>{
+    if(matched.includes(chip.textContent) && !chip.classList.contains('on')) chip.click();
+  });
+  showToast('已根據關鍵字自動帶入主題，可自行調整');
+}
+
+document.getElementById('fEn')?.addEventListener('blur', suggestTopicFromInputs);
+document.getElementById('fVidHowList')?.addEventListener('focusout', (e)=>{
+  if(e.target.classList.contains('vid-opt-input')) suggestTopicFromInputs();
+});
 
 /* ══ EDIT MODAL ══ */
 // Two independent Handshape auto-suggestions live side by side here:
