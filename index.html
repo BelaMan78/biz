@@ -1061,6 +1061,7 @@ import { getAuth, onAuthStateChanged, signInWithEmailAndPassword, signInWithPopu
    🔧 PASTE YOUR FIREBASE CONFIG HERE
 ══════════════════════════════════════ */
 
+
 const firebaseConfig = {
   apiKey: "AIzaSyDnHkZxAo-Q8LKOV6dSzCojfz9ZwlTKIaA",
   authDomain: "bizproject-cfdbc.firebaseapp.com",
@@ -1070,6 +1071,7 @@ const firebaseConfig = {
   appId: "1:4290375813:web:dde4fa566355e94f7279ec",
   measurementId: "G-QLP7W7R1YH"
 };
+
 
 /* ══════════════════════════════════════ */
 
@@ -3511,7 +3513,7 @@ window.doFilter=function(){
       else { const arr=Array.isArray(wVal)?wVal:(wVal?[wVal]:[]); if(!arr.includes(fVal)) return false; }
     }
     return true;
-  });
+  }).sort((a,b)=>a.en.localeCompare(b.en,undefined,{sensitivity:'base'}));
 
   document.getElementById('resultCount').textContent=list.length===words.length?`${list.length} signs`:`${list.length} of ${words.length} signs`;
   const el=document.getElementById('wordList');
@@ -3909,13 +3911,26 @@ function buildChips(containerId, values, selected, onToggle, singleSelect=false)
 }
 
 /* ══ AUTO-SUGGEST TOPIC (keyword match on English name + YouTube oEmbed title) ══ */
-// Maintain this table yourself: topic name (must exactly match a value in
-// your Topics collection) → lowercase keywords that should trigger it.
+// Generated from Financial_Literacy_Glossary_Chapter_Allocation_Expanded.xlsx
+// ("Allocated Terms" sheet: Term -> Chapter Title, 463 terms across 15 chapters).
+// Topic name = chapter title; any topic not already in your Topics collection
+// gets auto-created the first time it's matched (see suggestTopicFromInputs below).
 const TOPIC_KEYWORDS = {
-  'Finance':    ['invoice','payment','tax','budget','bank','loan','salary','accounting'],
-  'Meetings':   ['meeting','agenda','schedule','appointment','conference'],
-  'Technology': ['computer','software','email','password','server','network'],
-  // ...add your real Topic names + keywords here
+  'Understanding the Financial Planning Process': ["average", "base period", "benefit", "client", "deflation", "depression", "domestic", "ethics", "expansion", "finance", "goal", "gross domestic product gdp", "horizontal expansion", "human capital", "inflation", "money", "peak economy", "person", "personal", "planned economy", "price", "price index", "product", "profession", "recession", "standard", "tangible", "wealth"],
+  'Using Financial Statements and Budgets': ["acceleration", "accounting", "accounts receivable", "accrual", "allowance", "annuity", "asset", "balance sheet", "balanced budget", "basis", "bill", "bookkeeper", "break even analysis", "budget deficit", "cash", "cash flow", "control", "cooperation", "cost", "debt", "deficit", "equity", "equity balance sheet", "estimate", "expense", "expiration", "fair market", "fee", "financial statements", "fixed assets", "fixed expenses", "flat expenses", "for profit corporation", "funding", "home equity", "household", "income", "income tax", "integration", "investment", "liabilities", "liquid asset", "liquidity", "luxury", "market", "master budget", "matching", "net income", "net worth", "passive income", "payback", "paycheck", "property", "public corporation", "ratio", "rationalize", "receipt", "reliability", "remuneration", "report", "service", "solvency", "spending", "statement", "surplus", "unearned income revenue", "unlimited liability", "variable", "variable expense", "variance", "voucher"],
+  'Preparing your taxes': ["abatement", "adjust", "alimony", "auditing", "bonus", "child tax credit", "contribution", "deadline", "declaration", "declare", "deduction", "dependent", "effective tax rate", "estimated tax", "evasion", "excise tax", "exclusion", "exemption", "gross pay", "home office", "insurance", "itemized deduction", "justification", "law", "loophole", "marginal", "payroll", "payroll tax", "recapture", "refund", "social security", "structure", "tax return", "tax shelter", "void", "wage", "withholding", "write off"],
+  'Managing Your Cash and Savings': ["account", "accountability", "autopay", "bank", "bond", "bounce", "cashier", "certificate of deposit", "check", "checking account", "compound interest", "debit", "debit card", "demand", "deposit", "digital", "digital wallet", "elect", "endorsement", "float", "management", "mobile banking", "negotiable", "outstanding check", "overdraft", "overdraft fee", "payment", "petty cash", "public interest", "reconciliation", "reserve", "routing number", "savings", "share", "simple interest", "system", "transaction", "treasury", "us dollar", "wire transfer", "withdrawal"],
+  'Making Automobile and Housing Decisions': ["accumulated depreciation", "adjustable rate", "agreement", "amenities", "amortization", "anchoring", "appraisal", "auction", "automation", "balloon loan", "bargain", "broker", "buy", "cap", "capacity", "capitalized value", "carryover", "clause", "condominium", "consideration", "construction", "contingency", "contract", "conventional", "cooperative organization", "dealer", "deed", "depreciation", "down payment", "due care", "easement", "escrow", "escrow account", "eviction", "factor", "foreclosure", "franchise", "homeowner", "homework", "inspection", "intellectual property", "junior mortgage", "landlord", "lease", "loan", "maintenance", "margin", "mortgage", "neighborhood", "offer", "owner", "paid in capital", "parent company", "period", "purchase", "real estate", "realtor", "registration", "rent", "repurchase", "residual value", "sale", "scarcity", "shop", "startup capital", "sublease", "tenant", "title insurance", "title loan", "upfront payment", "useful life", "utilities", "vacancy", "warranty"],
+  'Using Credit': ["advance", "bankruptcy", "charge", "credit card", "credit score", "data breach", "default", "delinquent", "due date", "embezzlement", "entity", "forgery", "fraud", "fraud alert", "grace period", "identity theft", "limit", "money laundering", "phishing", "retail"],
+  'Using Consumer Loans': ["application", "bad debt", "collateral", "company", "consumer", "debt security", "disclosure", "discount", "grant", "guaranty", "install", "installment", "junk debt", "lender", "national debt", "penalty", "pledge", "predatory lending", "principal debt", "refinancing", "release", "rollover", "scholarship", "tuition", "unsecured debt"],
+  'Insuring Your Life': ["actuary", "analysis", "beneficiary", "event", "forfeiture", "monetary policy", "policy", "premium", "term", "term policy", "underwriting"],
+  'Protecting Your Health': ["advantage", "affordable", "association", "community", "coordination", "copay", "deductible", "disability", "flexible spending account", "hazard insurance", "healthcare", "internal", "medicaid", "medicare", "opportunity cost", "organization", "pool", "reimbursement", "savings account", "supplement", "testing", "unit", "workers compensation"],
+  'Insuring Your Property': ["accident", "agency", "agent", "claim", "coverage", "damage", "disaster", "disclaimer", "exposure", "loss", "moral hazard", "negligence", "net loss", "prevention", "probability", "responsibility", "risk management", "settle", "settlement", "umbrella policy"],
+  'Investment Planning': ["allocation", "arbitration", "bear", "bid", "bitcoin", "blockchain", "brokerage", "bull market", "capital", "commission", "commoditiy", "cryptocurrency", "derivative", "diversification", "fair trade", "illiquid", "intermediary", "invest", "market crash", "mission", "national", "nominal return", "passive investing", "portfolio", "portfolio beta", "primary market", "prospectus", "regulation", "return on investment", "speculation", "spread", "trade", "trademark", "window dressing"],
+  'Investing in Stocks and Bonds': ["bond premium", "book value", "business", "capital gains", "capitalization", "common stock", "conversion", "convertible", "corporate", "coupon", "dividends", "earnings", "face value", "growth", "holding period", "issue of stocks", "junk bond", "maturity", "maturity value", "par value", "preferred stock", "profit", "proxy", "purchasing power", "rating", "redeem", "register", "retained earnings", "revenue", "securities", "shareholder", "sinking fund", "stock split", "stockholder", "valuation", "value", "volatility", "yield"],
+  'Investing in Mutual Funds, ETFs, and Real Estate': ["emergency fund", "exchange traded fund", "fund", "mutual fund", "reinvestment", "seed funding"],
+  'Planning for Retirement': ["deferred", "defined benefit plan", "defined contribution plan", "distribution", "employee", "lump sum", "media", "pension", "qualified", "reduction", "retirement", "roth ira", "salary", "sponsor", "suspension", "vesting"],
+  'Preserving Your Estate': ["amend", "amendment", "amount", "charity", "endowment", "fiduciary", "goodwill", "guardian", "inherit", "inheritance", "irrevocable", "joint", "power of attorney", "remainder", "revocation", "trust organization", "trustee", "will"],
 };
 
 function guessTopicsFromText(text){
@@ -3945,10 +3960,21 @@ async function suggestTopicFromInputs(){
   const matched=guessTopicsFromText(nameText+' '+ytTitle);
   if(!matched.length) return;
 
-  chipsEl.querySelectorAll('.ms-chip').forEach(chip=>{
+  // Any matched keyword-table entry that doesn't exist yet as a real Topic
+  // (i.e. no chip for it) gets created in Firestore first, same as clicking
+  // the "+" next to the Topic label, then re-render the chips before selecting.
+  const {arr:topicArr}=builtinFieldByKey('topic');
+  const missing=matched.filter(name=>!topicArr.some(t=>t.value===name));
+  for(const name of missing){
+    const newDoc=await addValue('topics',name);
+    if(newDoc) topicArr.push(newDoc);
+  }
+  if(missing.length) buildModalFields(WORDS.find(x=>x.id===editingId)||{});
+
+  document.getElementById('chips_topic')?.querySelectorAll('.ms-chip').forEach(chip=>{
     if(matched.includes(chip.textContent) && !chip.classList.contains('on')) chip.click();
   });
-  showToast('已根據關鍵字自動帶入主題，可自行調整');
+  showToast('Topic auto-filled from keyword match — feel free to adjust');
 }
 
 document.getElementById('fEn')?.addEventListener('blur', suggestTopicFromInputs);
