@@ -184,6 +184,16 @@ body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--
 .adv-actions .apply{background:var(--accent);color:white;border-color:var(--accent);}
 .result-count{font-size:11px;color:var(--text3);padding:8px 14px 4px;}
 .word-list{flex:1;overflow-y:auto;}
+.word-list-pagination{display:flex;align-items:center;justify-content:center;gap:4px;padding:10px 8px;border-top:0.5px solid var(--border);flex-wrap:wrap;flex-shrink:0;}
+.wlp-btn{min-width:36px;height:36px;padding:0 8px;border-radius:var(--r-sm);border:0.5px solid var(--border2);background:var(--bg);color:var(--text2);font-size:13px;font-weight:500;cursor:pointer;display:flex;align-items:center;justify-content:center;}
+.wlp-btn:hover:not(:disabled){border-color:var(--accent);color:var(--accent);background:var(--accent-light);}
+.wlp-btn.active{background:var(--accent);color:#fff;border-color:var(--accent);}
+.wlp-btn:disabled{opacity:0.35;cursor:default;}
+.wlp-ellipsis{color:var(--text3);font-size:13px;padding:0 2px;}
+@media (max-width:768px){
+  .wlp-btn{min-width:40px;height:40px;font-size:14px;} /* larger tap targets on touch screens */
+  .word-list-pagination{gap:3px;padding:10px 6px;}
+}
 .word-row{display:flex;align-items:center;gap:8px;padding:9px 14px;border-bottom:0.5px solid var(--border);cursor:pointer;}
 .word-row:hover{background:var(--bg2);}
 .word-row.active{background:var(--accent-light);}
@@ -205,6 +215,8 @@ body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--
 .empty-state i{font-size:36px;}
 .empty-state p{font-size:13px;text-align:center;line-height:1.7;}
 .entry-en{font-size:22px;font-weight:500;color:var(--text);margin-bottom:2px;}
+.entry-en.solo{margin-bottom:12px;}
+.entry-en-secondary{font-size:16px;font-weight:400;color:var(--text2);}
 .entry-es{font-size:15px;color:var(--text2);margin-bottom:12px;font-style:italic;}
 .entry-tags{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:18px;}
 .vid-tabs{display:flex;gap:6px;margin-bottom:10px;}
@@ -472,7 +484,7 @@ body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--
   }
   .mobile-search-bar.show{display:flex;}
   .mobile-search-bar i{color:var(--text3);font-size:15px;}
-  .mobile-search-bar input{flex:1;border:none;outline:none;background:transparent;font-size:14px;color:var(--text);padding:6px 0;}
+  .mobile-search-bar input{flex:1;border:none;outline:none;background:transparent;font-size:16px;color:var(--text);padding:6px 0;}
   .lang-toggle{margin-left:0;}
   .lang-btn{padding:4px 8px;}
   .header-right{margin-left:6px;gap:6px;}
@@ -523,9 +535,15 @@ body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--
   .rv-vid-cell{min-width:0;}
 
   .left-top{padding:10px 12px;}
-  .word-row{padding:11px 14px;}
+  .word-row{padding:11px 14px;min-height:44px;} /* meet the 44px touch-target minimum */
   .adv-panel{padding:12px;}
   .options-wrap,.form-grid{grid-template-columns:1fr;}
+
+  /* ── Forms (contact, feedback, sign edit/admin, etc.) ──
+     16px prevents iOS Safari from auto-zooming the page on input focus —
+     below that threshold every tap into a field forces an unwanted zoom. */
+  .form-field input,.form-field select,.form-field textarea{font-size:16px;padding:10px;}
+  .btn,.hdr-btn,.adv-btn{min-height:40px;}
 
   /* ── Topics landing & category-options pages ──
      Single column (not 2) so each card has room to show its full
@@ -720,6 +738,7 @@ body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--
       </div>
       <p class="result-count" id="resultCount"></p>
       <div class="word-list" id="wordList"></div>
+      <div class="word-list-pagination" id="wordListPagination"></div>
     </aside>
     <div class="right-wrap">
       <div class="mobile-back-bar" id="mobileBackBar">
@@ -1095,7 +1114,6 @@ const firebaseConfig = {
   appId: "1:4290375813:web:dde4fa566355e94f7279ec",
   measurementId: "G-QLP7W7R1YH"
 };
-
 
 /* ══════════════════════════════════════ */
 
@@ -2659,6 +2677,13 @@ window.syncMobileSearch=function(val){
 window.showPage=function(p,extra){
   if(p==='admin'&&!isAdmin){ showPage('login'); return; }
   closeMobileMenu();
+  // Reset scroll position — otherwise navigating from something scrolled
+  // partway down (e.g. a Topic card near the bottom of a long Topics
+  // grid) leaves the new page's window scroll wherever it happened to be,
+  // instead of starting at the top like a normal page navigation should.
+  window.scrollTo(0,0);
+  document.getElementById('wordList')?.scrollTo(0,0);
+  document.getElementById('rightPanel')?.scrollTo(0,0);
   document.querySelectorAll('.page').forEach(el=>el.classList.remove('active'));
   document.querySelectorAll('.nav-item').forEach(el=>el.classList.remove('active'));
   if(p!=='catopt') activeCatOptFieldId=null;
@@ -2691,7 +2716,7 @@ window.showPage=function(p,extra){
     // filter dropdowns (like f_topic) stay set until resetFilters()
     // runs, otherwise the list still looks pre-filtered even with the
     // bar hidden.
-    if(extra!=='keep-context'){ DICT_CONTEXT=null; resetFilters(); }
+    if(extra!=='keep-context'){ DICT_CONTEXT=null; resetFilters(); closeAdvPanel(); clearDetailPanel(); }
     renderDictContextBar();
     // On mobile, always land on the list view (not a leftover detail
     // view from a previous visit) when arriving at the Dictionary page.
@@ -3004,6 +3029,8 @@ window.goToTopic=function(value){
   DICT_CONTEXT = value ? { title:value, backLabel:'Back to Topics', backAction:()=>showPage('topics') } : null;
   showPage('dict','keep-context');
   resetFilters();
+  closeAdvPanel();
+  clearDetailPanel();
   if(value){
     const sel=document.getElementById('f_topic');
     if(sel) sel.value=value;
@@ -3156,6 +3183,8 @@ window.goToCategoryOption=function(fieldId,value){
   DICT_CONTEXT = { title:value, backLabel:'Back to '+(cf?cf.name:'category'), backAction:()=>showPage('catopt',fieldId) };
   showPage('dict','keep-context');
   resetFilters();
+  closeAdvPanel();
+  clearDetailPanel();
   const sel=document.getElementById('f_cf_'+fieldId);
   if(sel) sel.value=value;
   doFilter();
@@ -3467,7 +3496,10 @@ function buildAcItems(q){
   const ql=q.toLowerCase();
   return visibleWords().filter(w=>w.en.toLowerCase().includes(ql)||(w.es||'').toLowerCase().includes(ql))
     .slice(0,10)
-    .map(w=>({id:w.id,label:w.en,sub:w.es||''}));
+    .map(w=>{
+      const showEs=currentLang==='es'&&w.es;
+      return showEs?{id:w.id,label:w.es,sub:w.en}:{id:w.id,label:w.en,sub:w.es||''};
+    });
 }
 function highlightMatch(text,q){
   if(!q) return esc(text);
@@ -3495,6 +3527,7 @@ window.acSelect=function(id){
     const searchWrap=document.querySelector('.header-search');
     if(searchWrap) searchWrap.style.display='flex';
     resetFilters();
+    closeAdvPanel();
     renderDictContextBar();
   }
   selectWord(id);
@@ -3514,6 +3547,11 @@ window.onSearchKeydown=function(e){
   else if(e.key==='Escape'){ closeAcDropdown(); }
 };
 document.addEventListener('click',e=>{ if(!e.target.closest('.header-search')) closeAcDropdown(); });
+
+
+let filteredWordList=[];
+let wordListPage=1;
+const WORD_LIST_PAGE_SIZE=50;
 
 window.doFilter=function(){
   const q=(document.getElementById('globalSearch').value||'').trim().toLowerCase();
@@ -3537,22 +3575,74 @@ window.doFilter=function(){
       else { const arr=Array.isArray(wVal)?wVal:(wVal?[wVal]:[]); if(!arr.includes(fVal)) return false; }
     }
     return true;
-  }).sort((a,b)=>a.en.localeCompare(b.en,undefined,{sensitivity:'base'}));
+  }).sort((a,b)=>{
+    const av=(currentLang==='es'&&a.es)?a.es:a.en;
+    const bv=(currentLang==='es'&&b.es)?b.es:b.en;
+    return av.localeCompare(bv,undefined,{sensitivity:'base'});
+  });
 
   document.getElementById('resultCount').textContent=list.length===words.length?`${list.length} signs`:`${list.length} of ${words.length} signs`;
+  filteredWordList=list;
+  wordListPage=1; // any new search/filter always starts back at page 1
+  renderWordListPage();
+};
+
+function renderWordListPage(){
+  const list=filteredWordList;
   const el=document.getElementById('wordList');
-  if(!list.length){ el.innerHTML=`<div class="no-results">${esc((SEARCH_I18N[currentLang]||SEARCH_I18N.en).noResults)}</div>`; return; }
-  el.innerHTML=list.map(w=>{
+  const pagEl=document.getElementById('wordListPagination');
+  if(!list.length){
+    el.innerHTML=`<div class="no-results">${esc((SEARCH_I18N[currentLang]||SEARCH_I18N.en).noResults)}</div>`;
+    if(pagEl) pagEl.innerHTML='';
+    return;
+  }
+  const totalPages=Math.max(1,Math.ceil(list.length/WORD_LIST_PAGE_SIZE));
+  wordListPage=Math.min(Math.max(1,wordListPage),totalPages);
+  const start=(wordListPage-1)*WORD_LIST_PAGE_SIZE;
+  const pageItems=list.slice(start,start+WORD_LIST_PAGE_SIZE);
+
+  el.innerHTML=pageItems.map(w=>{
     const cats=Array.isArray(w.cat)?w.cat:(w.cat?[w.cat]:[]);
     const cc=cats[0]?colorFor(cats[0]):CAT_C._default;
-    const sub=currentLang==='es'&&w.es?w.es:(cats[0]||'');
+    const showEs=currentLang==='es'&&w.es;
+    const primary=showEs?w.es:w.en; // Spanish mode shows the translated word as primary — falls back to English if this sign has no translation yet
+    const sub=cats[0]||'';
     const hands=Array.isArray(w.hand)?w.hand:(w.hand?[w.hand]:[]);
     return `<div class="word-row${activeWord===w.id?' active':''}" onclick="selectWord('${w.id}')">
-      <span class="word-en">${esc(w.en)}</span>
+      <span class="word-en">${esc(primary)}</span>
       <span class="word-sub">${esc(sub)}</span>
       <span class="pill" style="background:${cc[0]};color:${cc[1]}">${esc(hands[0]||'')}</span>
     </div>`;
   }).join('');
+
+  renderWordListPagination(totalPages);
+}
+
+function renderWordListPagination(totalPages){
+  const pagEl=document.getElementById('wordListPagination');
+  if(!pagEl) return;
+  if(totalPages<=1){ pagEl.innerHTML=''; return; }
+
+  // Always show first, last, current +/-1, with ellipses for gaps —
+  // keeps the control usable even with dozens of pages (800+ signs / 50 per page = 16-17 pages).
+  const pages=[];
+  for(let p=1;p<=totalPages;p++){
+    if(p===1||p===totalPages||Math.abs(p-wordListPage)<=1) pages.push(p);
+    else if(pages[pages.length-1]!=='…') pages.push('…');
+  }
+
+  const btn=(label,page,opts={})=>`<button class="wlp-btn${opts.active?' active':''}" ${opts.disabled?'disabled':''} ${page?`onclick="goToWordPage(${page})"`:''}>${label}</button>`;
+
+  pagEl.innerHTML=
+    btn('<i class="ti ti-chevron-left"></i>',wordListPage-1,{disabled:wordListPage===1})+
+    pages.map(p=>p==='…'?`<span class="wlp-ellipsis">…</span>`:btn(String(p),p,{active:p===wordListPage})).join('')+
+    btn('<i class="ti ti-chevron-right"></i>',wordListPage+1,{disabled:wordListPage===totalPages});
+}
+
+window.goToWordPage=function(page){
+  wordListPage=page;
+  renderWordListPage();
+  document.getElementById('wordList')?.scrollTo({top:0,behavior:'smooth'});
 };
 
 window.resetFilters=function(){
@@ -3564,12 +3654,31 @@ window.resetFilters=function(){
 };
 window.toggleAdv=function(){ document.getElementById('advPanel').classList.toggle('show'); document.getElementById('advToggle').classList.toggle('open'); };
 
+// Closes the Advanced filters panel if it's open. Used whenever navigating
+// INTO the Dictionary from elsewhere (a topic card, a category option,
+// the nav bar) — arriving at a fresh filtered view with the panel still
+// open from a previous visit is confusing, since the panel's own fields
+// no longer reflect how the list actually got filtered.
+function closeAdvPanel(){
+  document.getElementById('advPanel')?.classList.remove('show');
+  document.getElementById('advToggle')?.classList.remove('open');
+}
+// Clears the right-hand detail panel back to its empty placeholder and
+// forgets the previously-selected word. Used for the same reason as
+// closeAdvPanel above — landing on a new filtered view (e.g. a different
+// Topic) shouldn't keep showing whatever sign was selected last time.
+function clearDetailPanel(){
+  activeWord=null;
+  const rp=document.getElementById('rightPanel');
+  if(rp) rp.innerHTML=`<div class="empty-state"><i class="ti ti-hand-finger"></i><p>Select a sign from the list<br>to view its videos and description.</p></div>`;
+}
+
 /* ══ DETAIL VIEW ══ */
 window.selectWord=async function(id){
   const w=WORDS.find(x=>x.id===id); if(!w) return;
   if(isDraftEntry(w) && !isAdmin) return; // not ready for the public yet
   activeWord=w.id; activeVideoType='how'; activeVideoIndices={how:0, concept:0, example:0};
-  doFilter();
+  renderWordListPage();
   renderDetail(w); // render immediately with whatever's cached (fast UI)
   showMobileDetail(); // on mobile, slide from list to detail view
   await loadFeedbackForSign(id); // then refresh feedback async
@@ -3596,7 +3705,7 @@ window.showMobileWordList=function(){
 window.backToWordList=function(){
   activeWord=null;
   showMobileWordList();
-  doFilter();
+  renderWordListPage();
 };
 
 function renderDetail(w){
@@ -3660,8 +3769,10 @@ function renderDetail(w){
 
   document.getElementById('rightPanel').innerHTML=`
     <div class="detail-card">
-      <p class="entry-en">${esc(w.en)}</p>
-      ${w.es?`<p class="entry-es">${esc(w.es)}</p>`:''}
+      ${currentLang==='es'&&w.es
+        ? `<p class="entry-en solo">${esc(w.es)} <span class="entry-en-secondary">| ${esc(w.en)}</span></p>`
+        : `<p class="entry-en">${esc(w.en)}</p>${w.es?`<p class="entry-es">${esc(w.es)}</p>`:''}`
+      }
       <div class="entry-tags">${pillsHtml}${handPills}${specialPills}</div>
       <div class="vid-tabs">${tabs}</div>
       ${vidOptionsHtml}
