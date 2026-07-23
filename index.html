@@ -384,6 +384,15 @@ body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--
 .vid-opt-row .vid-opt-label{flex:0 0 34%;}
 .vid-opt-row .vid-opt-input{flex:1;}
 .vid-opt-remove{flex-shrink:0;width:28px;height:28px;display:flex;align-items:center;justify-content:center;border-radius:var(--r-sm);color:var(--text3);cursor:pointer;border:0.5px solid var(--border2);background:var(--bg2);}
+.vid-opt-row-wrap{display:flex;flex-direction:column;}
+.vid-opt-preview{display:none;margin-top:6px;}
+.vid-opt-preview.show{display:block;}
+.vid-opt-thumb{position:relative;width:160px;max-width:100%;aspect-ratio:16/9;border-radius:var(--r-md);overflow:hidden;cursor:pointer;background:var(--bg2);}
+.vid-opt-thumb img{width:100%;height:100%;object-fit:cover;display:block;}
+.vid-opt-play{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.32);color:#fff;font-size:26px;}
+.vid-opt-thumb:hover .vid-opt-play{background:rgba(0,0,0,0.5);}
+.vid-opt-player{width:220px;max-width:100%;aspect-ratio:16/9;border-radius:var(--r-md);overflow:hidden;}
+.vid-opt-player iframe{width:100%;height:100%;border:none;}
 .vid-opt-remove:hover{color:#c0392b;border-color:#c0392b;}
 .vid-opt-add{height:auto;padding:5px 12px;font-size:12px;margin-top:8px;display:inline-flex;align-items:center;gap:4px;width:auto;}
 .vid-options{display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap;}
@@ -4014,7 +4023,7 @@ function renderAdminTable(){
     const cats=Array.isArray(w.cat)?w.cat:(w.cat?[w.cat]:[]);
     const cc=cats[0]?colorFor(cats[0]):CAT_C._default;
     const hands=Array.isArray(w.hand)?w.hand:(w.hand?[w.hand]:[]);
-    const dots=['how','concept','example'].map(t=>`<span class="vdot ${w['vid_'+t]?'on':'off'}" title="${VID_META[t].label}"></span>`).join('');
+    const dots=['how','concept','example'].map(t=>`<span class="vdot ${(w['vid_'+t]||[]).length?'on':'off'}" title="${VID_META[t].label}"></span>`).join('');
     const reviewBadge=w._pendingReviewId?`<span class="fb-badge" style="background:var(--vexample-light);color:var(--vexample);margin-left:4px;" title="Edited by staff, awaiting Main Admin review">Pending review</span>`:'';
     const draftBadge=isDraftEntry(w)?`<span class="fb-badge" style="background:var(--vhow-light);color:var(--vhow);margin-left:4px;" title="No How-to-Sign video yet — hidden from the public dictionary until one is added">Draft</span>`:'';
     return `<tr>
@@ -4350,16 +4359,42 @@ window.addVidOption=function(listId, value={id:'',label:''}){
   const id = typeof value==='string' ? value : (value.id||'');
   const label = typeof value==='string' ? '' : (value.label||'');
   const row=document.createElement('div');
-  row.className='vid-opt-row';
-  row.innerHTML=`<input type="text" class="vid-opt-label" placeholder="Name (optional)" value="${esc(label)}"/><input type="text" class="vid-opt-input" placeholder="e.g. dQw4w9WgXcQ" value="${esc(id)}"/><span class="vid-opt-remove" onclick="removeVidOption(this)" title="Remove option"><i class="ti ti-x"></i></span>`;
+  row.className='vid-opt-row-wrap';
+  row.innerHTML=`<div class="vid-opt-row">
+      <input type="text" class="vid-opt-label" placeholder="Name (optional)" value="${esc(label)}"/>
+      <input type="text" class="vid-opt-input" placeholder="e.g. dQw4w9WgXcQ" value="${esc(id)}" oninput="updateVidPreview(this)"/>
+      <span class="vid-opt-remove" onclick="removeVidOption(this)" title="Remove option"><i class="ti ti-x"></i></span>
+    </div>
+    <div class="vid-opt-preview"></div>`;
   list.appendChild(row);
+  updateVidPreview(row.querySelector('.vid-opt-input'));
+};
+// Shows a click-to-play thumbnail under a Video ID field so admins can
+// tell sign variants apart (e.g. "One-handed" vs "Two-handed") without
+// leaving the edit form and hunting for the sign in the public Dictionary.
+// Starts as a thumbnail (not an auto-loaded iframe) so typing/editing many
+// rows in a row doesn't quietly spin up a pile of embedded players.
+window.updateVidPreview=function(inputEl){
+  const wrap=inputEl.closest('.vid-opt-row-wrap');
+  const previewEl=wrap?.querySelector('.vid-opt-preview');
+  if(!previewEl) return;
+  const id=safeYtId(inputEl.value.trim());
+  if(!id){ previewEl.innerHTML=''; previewEl.classList.remove('show'); return; }
+  previewEl.classList.add('show');
+  previewEl.innerHTML=`<div class="vid-opt-thumb" onclick="playVidPreview(this,'${id}')">
+    <img src="https://img.youtube.com/vi/${id}/mqdefault.jpg" alt="" loading="lazy"/>
+    <span class="vid-opt-play"><i class="ti ti-player-play-filled"></i></span>
+  </div>`;
+};
+window.playVidPreview=function(thumbEl,id){
+  thumbEl.outerHTML=`<div class="vid-opt-player"><iframe src="https://www.youtube.com/embed/${id}?autoplay=1&rel=0" allow="accelerometer;autoplay;clipboard-write;encrypted-media;gyroscope;picture-in-picture" allowfullscreen></iframe></div>`;
 };
 window.removeVidOption=function(el){
-  const row=el.closest('.vid-opt-row');
+  const row=el.closest('.vid-opt-row-wrap');
   const list=el.closest('.vid-opt-list');
   // Always leave at least one (possibly empty) row so there's somewhere to type.
-  if(list.querySelectorAll('.vid-opt-row').length>1) row.remove();
-  else row.querySelectorAll('input').forEach(i=>i.value='');
+  if(list.querySelectorAll('.vid-opt-row-wrap').length>1) row.remove();
+  else { row.querySelectorAll('input').forEach(i=>i.value=''); updateVidPreview(row.querySelector('.vid-opt-input')); }
 };
 function setVidOptions(listId, values){
   const list=document.getElementById(listId); list.innerHTML='';
@@ -4367,7 +4402,7 @@ function setVidOptions(listId, values){
   arr.forEach(v=>addVidOption(listId, v));
 }
 function getVidOptions(listId){
-  return [...document.querySelectorAll(`#${listId} .vid-opt-row`)]
+  return [...document.querySelectorAll(`#${listId} .vid-opt-row-wrap`)]
     .map(row=>({id:row.querySelector('.vid-opt-input').value.trim(), label:row.querySelector('.vid-opt-label').value.trim()}))
     .filter(o=>o.id);
 }
