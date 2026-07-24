@@ -1138,6 +1138,7 @@ const firebaseConfig = {
   appId: "1:4290375813:web:dde4fa566355e94f7279ec",
   measurementId: "G-QLP7W7R1YH"
 };
+
 /* ══════════════════════════════════════ */
 
 const app  = initializeApp(firebaseConfig);
@@ -3935,7 +3936,25 @@ function ensureYtApi(cb){
   }
 }
 
+let gifLoopWatcher=null;
+function stopGifLoopWatcher(){ if(gifLoopWatcher){ clearInterval(gifLoopWatcher); gifLoopWatcher=null; } }
+// These sign clips are usually only a second or two long, so checking
+// every 150ms is frequent enough to catch the last fraction of a second
+// and seek back to 0 *before* YouTube ever considers the video "ended" —
+// that's what keeps the player continuously in the PLAYING state and
+// avoids ever triggering YouTube's own center pause/replay icon.
+function startGifLoopWatcher(player){
+  stopGifLoopWatcher();
+  gifLoopWatcher=setInterval(()=>{
+    try{
+      const dur=player.getDuration(), cur=player.getCurrentTime();
+      if(dur>0 && cur>0 && dur-cur<0.35) player.seekTo(0,true);
+    }catch(e){}
+  },150);
+}
+
 function destroyGifPlayer(){
+  stopGifLoopWatcher();
   if(ytGifPlayer){ try{ ytGifPlayer.destroy(); }catch(e){} ytGifPlayer=null; }
 }
 
@@ -3953,7 +3972,10 @@ function initGifPlayer(ytId){
       videoId:ytId,
       playerVars:{autoplay:1,mute:1,controls:0,modestbranding:1,rel:0,disablekb:1,iv_load_policy:3,fs:0,playsinline:1},
       events:{
-        onReady:(e)=>{ e.target.mute(); e.target.playVideo(); },
+        onReady:(e)=>{ e.target.mute(); e.target.playVideo(); startGifLoopWatcher(e.target); },
+        // Fallback only — the watcher below should always catch it first,
+        // but if a lag spike lets a video slip past the watcher and it
+        // genuinely reaches ENDED, still restart it rather than freezing.
         onStateChange:(e)=>{ if(e.data===YT.PlayerState.ENDED){ e.target.seekTo(0); e.target.playVideo(); } }
       }
     });
