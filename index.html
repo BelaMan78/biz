@@ -2755,6 +2755,9 @@ window.showPage=function(p,extra){
   }
   else if(p==='admin'){
     document.getElementById('pageAdmin').classList.add('active'); switchAdminTab('signs');
+    const searchInput=document.getElementById('adminSearchInput');
+    if(searchInput) searchInput.value='';
+    adminTablePage=1;
     const tbody=document.getElementById('adminTbody');
     if(tbody && !tbody.children.length) tbody.innerHTML='<tr><td colspan="7" style="font-size:12px;color:var(--text3);padding:12px;">Loading…</td></tr>';
     (dataLoadedPromise||Promise.resolve()).then(renderAdminTable);
