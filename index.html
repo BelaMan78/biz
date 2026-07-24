@@ -3684,7 +3684,8 @@ function renderWordListPagination(totalPages){
 window.goToWordPage=function(page){
   wordListPage=page;
   renderWordListPage();
-  document.getElementById('wordList')?.scrollTo({top:0,behavior:'smooth'});
+  window.scrollTo({top:0,behavior:'smooth'});
+  document.getElementById('wordList')?.scrollTo(0,0);
 };
 
 window.resetFilters=function(){
@@ -4170,7 +4171,7 @@ window.onAdminSearchInput=function(){ adminTablePage=1; renderAdminTable(); };
 window.goToAdminTablePage=function(page){
   adminTablePage=page;
   renderAdminTable();
-  document.querySelector('.admin-table-wrap')?.scrollTo(0,0);
+  window.scrollTo({top:0,behavior:'smooth'});
 };
 
 function renderAdminTable(){
