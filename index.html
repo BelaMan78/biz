@@ -457,6 +457,7 @@ body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--
 .video-box #ytGifTarget{width:100%;height:100%;}
 
 .gif-tap-catcher{position:absolute;inset:0;z-index:1;cursor:pointer;}
+.video-box:has(.gif-controls.kal-no-bridge) .gif-tap-catcher{display:none;} /* let clicks through to Kaltura's own controls */
 
 .gif-controls{position:absolute;bottom:0;left:0;right:0;z-index:2;display:flex;align-items:center;gap:6px;padding:8px 10px;background:linear-gradient(to top, rgba(0,0,0,0.7), transparent);opacity:0;pointer-events:none;transition:opacity 0.15s ease;}
 
@@ -481,6 +482,8 @@ body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--
 .gif-speed-btn.active{background:#fff;color:#111;}
 
 .gif-speed-btn:hover:not(.active){background:rgba(255,255,255,0.28);}
+.gif-controls.kal-no-bridge{display:none;} /* no confirmed control channel — fall back to the provider's own controls */
+.gif-speed-group.unsupported{display:none;}
 
 @media (max-width:480px){
 
@@ -800,9 +803,15 @@ body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--
 
 .vid-opt-row{display:flex;align-items:center;gap:6px;}
 
-.vid-opt-row .vid-opt-label{flex:0 0 34%;}
+.vid-opt-row .vid-opt-src{flex:0 0 92px;font-size:12px;border-radius:var(--r-sm);border:0.5px solid var(--border2);background:var(--bg2);padding:0 6px;height:28px;}
+
+.vid-opt-row .vid-opt-label{flex:0 0 28%;}
 
 .vid-opt-row .vid-opt-input{flex:1;}
+
+.vid-opt-thumb-gal{display:flex;align-items:center;justify-content:center;background:linear-gradient(135deg,#0e1f33,#1b3a5c);}
+
+.vid-opt-thumb-gal .vid-opt-play{position:static;background:none;}
 
 .vid-opt-remove{flex-shrink:0;width:28px;height:28px;display:flex;align-items:center;justify-content:center;border-radius:var(--r-sm);color:var(--text3);cursor:pointer;border:0.5px solid var(--border2);background:var(--bg2);}
 
@@ -2124,9 +2133,9 @@ body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--
 
     <div style="background:var(--bg2);border-radius:var(--r-md);padding:12px 14px;margin-bottom:14px;">
 
-      <p style="font-size:12px;font-weight:600;color:var(--text);margin-bottom:10px;"><i class="ti ti-brand-youtube" style="color:#FF0000;margin-right:5px;"></i>YouTube Video IDs (Unlisted)</p>
+      <p style="font-size:12px;font-weight:600;color:var(--text);margin-bottom:10px;"><i class="ti ti-brand-youtube" style="color:#FF0000;margin-right:5px;"></i>Video IDs — YouTube (Unlisted) or Gallaudet (Unlisted)</p>
 
-      <p class="yt-hint" style="margin-bottom:10px;">youtube.com/watch?v=<strong>THIS_PART</strong> — add more than one option if a word has more than one accepted way to sign it, and give each one a name (e.g. "Two-handed") so it's easy to tell apart.</p>
+      <p class="yt-hint" style="margin-bottom:10px;">Pick a source per row, then paste just the ID: youtube.com/watch?v=<strong>THIS_PART</strong>, or media.gallaudet.edu/media/.../<strong>THIS_PART</strong>. Add more than one option if a word has more than one accepted way to sign it, and give each one a name (e.g. "Two-handed") so it's easy to tell apart.</p>
 
       <div class="form-field" style="margin-bottom:12px;">
 
@@ -2204,7 +2213,7 @@ body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--
 
 <div class="modal-overlay" id="fsModal">
 
-  <iframe class="modal-video" id="fsIframe" allow="autoplay; fullscreen" allowfullscreen></iframe>
+  <iframe class="modal-video" id="fsIframe" allow="autoplay; fullscreen; encrypted-media" allowfullscreen></iframe>
 
   <button class="modal-close-btn" onclick="closeFsModal()"><i class="ti ti-x"></i> Close</button>
 
@@ -2263,6 +2272,7 @@ import { getAuth, onAuthStateChanged, signInWithEmailAndPassword, signInWithPopu
    🔧 PASTE YOUR FIREBASE CONFIG HERE
 
 ══════════════════════════════════════ */
+
 
 
 
@@ -2539,9 +2549,59 @@ function vidArr(w,type){
 
   return arr
 
-    .map(x => typeof x==='string' ? {id:x, label:''} : {id:(x&&x.id)||'', label:(x&&x.label)||''})
+    .map(x => typeof x==='string' ? {id:x, label:'', src:'yt'} : {id:(x&&x.id)||'', label:(x&&x.label)||'', src:(x&&x.src)==='gallaudet'?'gallaudet':'yt'})
 
     .filter(x => x.id && String(x.id).trim());
+
+}
+
+
+
+/* ══ Gallaudet (Kaltura MediaSpace) video support ══
+
+   Gallaudet's media site (media.gallaudet.edu) runs on Kaltura MediaSpace,
+
+   not YouTube. Its "Share > Embed" panel gives a plain <iframe> (no partner
+
+   ID exposed on the page), which per Kaltura's own docs means the host page
+
+   can't reach the player's JS API directly — control has to go through the
+
+   open Player.js postMessage bridge instead (loaded lazily, see
+
+   ensurePlayerJs below). uiConfId is copied verbatim from a real Gallaudet
+
+   embed code; if Gallaudet ever changes players this is the one constant to
+
+   update.
+
+   NOTE: the control-hiding/autoplay query params below are Kaltura's
+
+   documented flashvar names, applied best-effort — Gallaudet's exact KMS
+
+   config was never confirmed against a live request (their site blocks
+
+   automated fetches), so treat "hideChrome" as "probably works, harmless if
+
+   ignored" rather than guaranteed. */
+
+const KALTURA_DOMAIN='media.gallaudet.edu', KALTURA_UICONF='52298532';
+
+function kalturaEmbedSrc(entryId, opts={}){
+
+  entryId=safeYtId(entryId);
+
+  let url=`https://${KALTURA_DOMAIN}/embed/secure/iframe/entryId/${entryId}/uiConfId/${KALTURA_UICONF}/st/0`;
+
+  const p=[];
+
+  if(opts.autoplay) p.push('autoplay=true','autoPlay=true','flashvars[autoPlay]=true','autoMute=true','flashvars[autoMute]=true');
+
+  if(opts.hideChrome) p.push('flashvars[controlBarContainer.plugin]=false','flashvars[largePlayBtn.plugin]=false','flashvars[loadingSpinner.plugin]=false');
+
+  if(p.length) url+='?'+p.join('&');
+
+  return url;
 
 }
 
@@ -7573,9 +7633,13 @@ function renderDetail(w){
 
 
 
-  const ytId=safeYtId(curVidList[curVidIdx] && curVidList[curVidIdx].id);
+  const curVid=curVidList[curVidIdx];
 
-  const videoHtml=ytId
+  const curVidSafe=curVid ? {id: safeYtId(curVid.id), src: curVid.src==='gallaudet'?'gallaudet':'yt'} : null;
+
+  window._curVidForFs = curVidSafe; // openFsModal reads this — see note by its call site below
+
+  const videoHtml=curVidSafe
 
     ?`<div id="ytGifTarget"></div>
 
@@ -7589,7 +7653,7 @@ function renderDetail(w){
 
       <div class="gif-tap-catcher" onclick="toggleGifControlsVisible(event)"></div>
 
-      <div class="gif-controls">
+      <div class="gif-controls" id="gifControlsBar">
 
         <button class="gif-ctrl-btn" id="gifPlayBtn" onclick="toggleGifPlay()" title="Play/Pause"><i class="ti ti-player-pause-filled"></i></button>
 
@@ -7605,7 +7669,7 @@ function renderDetail(w){
 
         </div>
 
-        <button class="gif-ctrl-btn" onclick="openFsModal('${ytId}')" title="Fullscreen"><i class="ti ti-maximize"></i></button>
+        <button class="gif-ctrl-btn" onclick="openFsModal(window._curVidForFs)" title="Fullscreen"><i class="ti ti-maximize"></i></button>
 
       </div>`
 
@@ -7647,7 +7711,7 @@ function renderDetail(w){
 
   fbRating=0; fbType='';
 
-  if(ytId) initGifPlayer(ytId); else destroyGifPlayer();
+  if(curVidSafe) initGifPlayer(curVidSafe); else destroyGifPlayer();
 
 }
 
@@ -7855,6 +7919,16 @@ function renderFeedbackSection(w){
 
 let ytApiReady=false, ytApiLoading=false, ytGifPlayer=null, pendingGifYtId=null;
 
+// Kaltura side of the same "one video showing at a time" bookkeeping —
+
+// kalPlayer is the Player.js wrapper once (if) the postMessage bridge
+
+// connects; kalBridgeOk tracks whether our custom control bar is allowed
+
+// to be shown (only once we've actually confirmed we can drive the player).
+
+let kalPlayer=null, kalBridgeOk=false, pendingKalEntryId=null, playerJsReady=false, playerJsLoading=false;
+
 
 
 function ensureYtApi(cb){
@@ -7881,9 +7955,49 @@ function ensureYtApi(cb){
 
 
 
+// Player.js (embedly's open postMessage spec) is how we drive the Kaltura
+
+// iframe from the host page without knowing Gallaudet's Kaltura partner ID —
+
+// see the comment above kalturaEmbedSrc for why the usual Kaltura JS API
+
+// (kWidget) isn't an option here.
+
+function ensurePlayerJs(cb){
+
+  if(playerJsReady){ cb(); return; }
+
+  if(!playerJsLoading){
+
+    playerJsLoading=true;
+
+    const tag=document.createElement('script');
+
+    tag.src='https://cdn.embed.ly/player-0.1.0.min.js';
+
+    tag.onload=()=>{ playerJsReady=true; cb(); };
+
+    tag.onerror=()=>{ /* left un-set; caller's own timeout handles this */ };
+
+    document.head.appendChild(tag);
+
+  } else {
+
+    const check=setInterval(()=>{ if(playerJsReady){ clearInterval(check); cb(); } },100);
+
+  }
+
+}
+
+
+
 function destroyGifPlayer(){
 
   if(ytGifPlayer){ try{ ytGifPlayer.destroy(); }catch(e){} ytGifPlayer=null; }
+
+  if(kalPlayer){ try{ kalPlayer.off(); }catch(e){} kalPlayer=null; }
+
+  kalBridgeOk=false; pendingKalEntryId=null;
 
 }
 
@@ -7901,9 +8015,13 @@ function destroyGifPlayer(){
 
 // suppressed via player parameters. Tap/click the overlay to replay.
 
-function initGifPlayer(ytId){
+function initGifPlayer(video){
 
   destroyGifPlayer();
+
+  if(video.src==='gallaudet'){ initKalturaGifPlayer(video.id); return; }
+
+  const ytId=video.id;
 
   pendingGifYtId=ytId;
 
@@ -7934,6 +8052,88 @@ function initGifPlayer(ytId){
         onStateChange:(e)=>{ if(e.data===YT.PlayerState.ENDED) showGifReplayOverlay(ytId); }
 
       }
+
+    });
+
+  });
+
+}
+
+
+
+// Gallaudet/Kaltura path: start with plain autoplay+loop and NO chrome
+
+// hidden yet (so the video is always watchable via Kaltura's own controls
+
+// even if the bridge below never connects). Only once Player.js confirms
+
+// it can actually drive the player do we swap in the chrome-hidden source
+
+// and reveal our own hover control bar — otherwise the video would be
+
+// showing with literally no way to pause/seek it.
+
+function initKalturaGifPlayer(entryId){
+
+  pendingKalEntryId=entryId;
+
+  const target=document.getElementById('ytGifTarget');
+
+  if(!target) return;
+
+  target.innerHTML=`<iframe id="kalGifFrame" src="${kalturaEmbedSrc(entryId,{autoplay:true})}" allow="autoplay; fullscreen; encrypted-media" allowfullscreen frameborder="0" style="width:100%;height:100%;"></iframe>`;
+
+  const controlsBar=document.getElementById('gifControlsBar');
+
+  const speedGroup=document.getElementById('gifSpeedGroup');
+
+  let settled=false;
+
+  const fallback=setTimeout(()=>{
+
+    if(settled || pendingKalEntryId!==entryId) return;
+
+    settled=true;
+
+    // No confirmed control channel — leave Kaltura's own controls visible
+
+    // and hide our (non-functional) custom bar rather than show dead buttons.
+
+    controlsBar?.classList.add('kal-no-bridge');
+
+  },4000);
+
+  ensurePlayerJs(()=>{
+
+    if(pendingKalEntryId!==entryId) return;
+
+    const frame=document.getElementById('kalGifFrame');
+
+    if(!frame) return;
+
+    const p=new playerjs.Player(frame);
+
+    p.on('ready',()=>{
+
+      if(pendingKalEntryId!==entryId || settled) return;
+
+      settled=true; clearTimeout(fallback);
+
+      kalPlayer=p; kalBridgeOk=true;
+
+      // Now that we know we can control it, swap to the chrome-hidden
+
+      // source (brief restart is an acceptable trade-off) and mute it —
+
+      // muting only works reliably once we have the API, hence not doing
+
+      // it via URL params alone.
+
+      if(p.supports && p.supports('method','mute')) p.mute();
+
+      p.on('ended',()=>{ p.setCurrentTime(0); p.play(); });
+
+      if(!(p.supports && p.supports('method','setPlaybackRate'))) speedGroup?.classList.add('unsupported');
 
     });
 
@@ -7981,9 +8181,9 @@ window.replayGifVideo=function(){
 
 // Bound to the transparent .gif-tap-catcher layer rather than the video
 
-// itself, because a cross-origin YouTube iframe swallows clicks — they
+// itself, because a cross-origin iframe (YouTube or Kaltura) swallows
 
-// never bubble out to the parent page's own click handlers.
+// clicks — they never bubble out to the parent page's own click handlers.
 
 window.toggleGifControlsVisible=function(e){
 
@@ -7995,9 +8195,23 @@ window.toggleGifControlsVisible=function(e){
 
 window.toggleGifPlay=function(){
 
-  if(!ytGifPlayer) return;
-
   const btn=document.getElementById('gifPlayBtn');
+
+  if(kalBridgeOk && kalPlayer){
+
+    kalPlayer.getPaused(paused=>{
+
+      if(paused){ kalPlayer.play(); if(btn) btn.innerHTML='<i class="ti ti-player-pause-filled"></i>'; }
+
+      else { kalPlayer.pause(); if(btn) btn.innerHTML='<i class="ti ti-player-play-filled"></i>'; }
+
+    });
+
+    return;
+
+  }
+
+  if(!ytGifPlayer) return;
 
   const playing=ytGifPlayer.getPlayerState()===1; // 1 = YT.PlayerState.PLAYING
 
@@ -8011,7 +8225,9 @@ window.toggleGifPlay=function(){
 
 window.setGifSpeed=function(rate,btnEl){
 
-  if(ytGifPlayer) ytGifPlayer.setPlaybackRate(rate);
+  if(kalBridgeOk && kalPlayer && kalPlayer.setPlaybackRate) kalPlayer.setPlaybackRate(rate);
+
+  else if(ytGifPlayer) ytGifPlayer.setPlaybackRate(rate);
 
   btnEl.closest('#gifSpeedGroup')?.querySelectorAll('.gif-speed-btn').forEach(b=>b.classList.remove('active'));
 
@@ -8025,7 +8241,15 @@ window.switchVideoTab=function(wId,type){ const w=WORDS.find(x=>x.id===wId); if(
 
 window.switchVideoOption=function(wId,idx){ const w=WORDS.find(x=>x.id===wId); if(!w) return; activeVideoIndices[activeVideoType]=idx; renderDetail(w); };
 
-window.openFsModal=function(ytId){ ytId=safeYtId(ytId); document.getElementById('fsIframe').src=`https://www.youtube.com/embed/${ytId}?autoplay=1&rel=0`; document.getElementById('fsModal').classList.add('show'); };
+window.openFsModal=function(video){
+
+  const src = (video && video.src==='gallaudet') ? kalturaEmbedSrc(video.id,{autoplay:true}) : `https://www.youtube.com/embed/${safeYtId(video && video.id)}?autoplay=1&rel=0`;
+
+  document.getElementById('fsIframe').src=src;
+
+  document.getElementById('fsModal').classList.add('show');
+
+};
 
 window.closeFsModal=function(){ document.getElementById('fsIframe').src=''; document.getElementById('fsModal').classList.remove('show'); };
 
@@ -8567,7 +8791,11 @@ async function autoFillChipField(fieldKey, table, label){
 
   const nameText=document.getElementById('fEn').value;
 
-  const firstYtId=document.querySelector('#fVidHowList .vid-opt-input')?.value?.trim();
+  const firstRow=document.querySelector('#fVidHowList .vid-opt-row-wrap');
+
+  const firstIsYt=firstRow?.querySelector('.vid-opt-src')?.value!=='gallaudet';
+
+  const firstYtId=firstIsYt ? firstRow?.querySelector('.vid-opt-input')?.value?.trim() : '';
 
   const ytTitle=firstYtId ? await fetchYoutubeTitle(firstYtId) : '';
 
@@ -8957,7 +9185,7 @@ window.applySignDataToken=function(word, tokenIndex){
 
 // "Two-handed" or "Regional variant" — instead of just one ID).
 
-window.addVidOption=function(listId, value={id:'',label:''}){
+window.addVidOption=function(listId, value={id:'',label:'',src:'yt'}){
 
   const list=document.getElementById(listId);
 
@@ -8965,25 +9193,61 @@ window.addVidOption=function(listId, value={id:'',label:''}){
 
   const label = typeof value==='string' ? '' : (value.label||'');
 
+  const src = (typeof value==='string' || value.src!=='gallaudet') ? 'yt' : 'gallaudet';
+
   const row=document.createElement('div');
 
   row.className='vid-opt-row-wrap';
 
   row.innerHTML=`<div class="vid-opt-row">
 
+      <select class="vid-opt-src" onchange="onVidSrcChange(this)" title="Video source">
+
+        <option value="yt"${src==='yt'?' selected':''}>YouTube</option>
+
+        <option value="gallaudet"${src==='gallaudet'?' selected':''}>Gallaudet</option>
+
+      </select>
+
       <input type="text" class="vid-opt-label" placeholder="Name (optional)" value="${esc(label)}"/>
 
-      <input type="text" class="vid-opt-input" placeholder="e.g. dQw4w9WgXcQ" value="${esc(id)}" oninput="updateVidPreview(this)"/>
+      <input type="text" class="vid-opt-input" placeholder="${src==='gallaudet'?'e.g. 1_9f9tsujz':'e.g. dQw4w9WgXcQ'}" value="${esc(id)}" oninput="updateVidPreview(this)"/>
 
       <span class="vid-opt-remove" onclick="removeVidOption(this)" title="Remove option"><i class="ti ti-x"></i></span>
 
     </div>
+
+    <p class="yt-hint vid-opt-src-hint" style="${src==='gallaudet'?'':'display:none;'}margin:4px 0 0;">media.gallaudet.edu/media/.../<strong>THIS_PART</strong> — the id after the video's name in the URL, e.g. "1_9f9tsujz".</p>
 
     <div class="vid-opt-preview"></div>`;
 
   list.appendChild(row);
 
   updateVidPreview(row.querySelector('.vid-opt-input'));
+
+};
+
+// Switching a row's source just needs the placeholder/hint and the (already
+
+// visible) preview to reflect the new provider — the id field itself is
+
+// left as-is since admins often paste the ID before picking the source.
+
+window.onVidSrcChange=function(selectEl){
+
+  const row=selectEl.closest('.vid-opt-row-wrap');
+
+  const input=row.querySelector('.vid-opt-input');
+
+  const hint=row.querySelector('.vid-opt-src-hint');
+
+  const isGal=selectEl.value==='gallaudet';
+
+  input.placeholder = isGal ? 'e.g. 1_9f9tsujz' : 'e.g. dQw4w9WgXcQ';
+
+  if(hint) hint.style.display = isGal ? '' : 'none';
+
+  updateVidPreview(input);
 
 };
 
@@ -8997,11 +9261,19 @@ window.addVidOption=function(listId, value={id:'',label:''}){
 
 // rows in a row doesn't quietly spin up a pile of embedded players.
 
+// Gallaudet/Kaltura has no thumbnail-image endpoint we can hit without a
+
+// partner ID (see kalturaEmbedSrc's comment), so its "thumbnail" is just a
+
+// generic placeholder that becomes a live iframe once clicked.
+
 window.updateVidPreview=function(inputEl){
 
   const wrap=inputEl.closest('.vid-opt-row-wrap');
 
   const previewEl=wrap?.querySelector('.vid-opt-preview');
+
+  const isGal=wrap?.querySelector('.vid-opt-src')?.value==='gallaudet';
 
   if(!previewEl) return;
 
@@ -9011,19 +9283,29 @@ window.updateVidPreview=function(inputEl){
 
   previewEl.classList.add('show');
 
-  previewEl.innerHTML=`<div class="vid-opt-thumb" onclick="playVidPreview(this,'${id}')">
+  previewEl.innerHTML = isGal
 
-    <img src="https://img.youtube.com/vi/${id}/mqdefault.jpg" alt="" loading="lazy"/>
+    ? `<div class="vid-opt-thumb vid-opt-thumb-gal" onclick="playVidPreview(this,'${id}',true)">
 
-    <span class="vid-opt-play"><i class="ti ti-player-play-filled"></i></span>
+         <span class="vid-opt-play"><i class="ti ti-player-play-filled"></i></span>
 
-  </div>`;
+       </div>`
+
+    : `<div class="vid-opt-thumb" onclick="playVidPreview(this,'${id}')">
+
+         <img src="https://img.youtube.com/vi/${id}/mqdefault.jpg" alt="" loading="lazy"/>
+
+         <span class="vid-opt-play"><i class="ti ti-player-play-filled"></i></span>
+
+       </div>`;
 
 };
 
-window.playVidPreview=function(thumbEl,id){
+window.playVidPreview=function(thumbEl,id,isGal){
 
-  thumbEl.outerHTML=`<div class="vid-opt-player"><iframe src="https://www.youtube.com/embed/${id}?autoplay=1&rel=0" allow="accelerometer;autoplay;clipboard-write;encrypted-media;gyroscope;picture-in-picture" allowfullscreen></iframe></div>`;
+  const src = isGal ? kalturaEmbedSrc(id,{autoplay:true}) : `https://www.youtube.com/embed/${id}?autoplay=1&rel=0`;
+
+  thumbEl.outerHTML=`<div class="vid-opt-player"><iframe src="${src}" allow="accelerometer;autoplay;clipboard-write;encrypted-media;gyroscope;picture-in-picture" allowfullscreen></iframe></div>`;
 
 };
 
@@ -9045,7 +9327,7 @@ function setVidOptions(listId, values){
 
   const list=document.getElementById(listId); list.innerHTML='';
 
-  const arr=(values&&values.length)?values:[{id:'',label:''}];
+  const arr=(values&&values.length)?values:[{id:'',label:'',src:'yt'}];
 
   arr.forEach(v=>addVidOption(listId, v));
 
@@ -9055,7 +9337,7 @@ function getVidOptions(listId){
 
   return [...document.querySelectorAll(`#${listId} .vid-opt-row-wrap`)]
 
-    .map(row=>({id:row.querySelector('.vid-opt-input').value.trim(), label:row.querySelector('.vid-opt-label').value.trim()}))
+    .map(row=>({id:row.querySelector('.vid-opt-input').value.trim(), label:row.querySelector('.vid-opt-label').value.trim(), src:row.querySelector('.vid-opt-src').value==='gallaudet'?'gallaudet':'yt'}))
 
     .filter(o=>o.id);
 
