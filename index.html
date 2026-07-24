@@ -1128,6 +1128,7 @@ import { getAuth, onAuthStateChanged, signInWithEmailAndPassword, signInWithPopu
    🔧 PASTE YOUR FIREBASE CONFIG HERE
 ══════════════════════════════════════ */
 
+
 const firebaseConfig = {
   apiKey: "AIzaSyDnHkZxAo-Q8LKOV6dSzCojfz9ZwlTKIaA",
   authDomain: "bizproject-cfdbc.firebaseapp.com",
@@ -1137,7 +1138,6 @@ const firebaseConfig = {
   appId: "1:4290375813:web:dde4fa566355e94f7279ec",
   measurementId: "G-QLP7W7R1YH"
 };
-
 /* ══════════════════════════════════════ */
 
 const app  = initializeApp(firebaseConfig);
@@ -3951,8 +3951,11 @@ function initGifPlayer(ytId){
     if(!target) return;
     ytGifPlayer=new YT.Player('ytGifTarget',{
       videoId:ytId,
-      playerVars:{autoplay:1,mute:1,controls:0,modestbranding:1,rel:0,disablekb:1,iv_load_policy:3,fs:0,loop:1,playlist:ytId,playsinline:1},
-      events:{ onReady:(e)=>{ e.target.mute(); e.target.playVideo(); } }
+      playerVars:{autoplay:1,mute:1,controls:0,modestbranding:1,rel:0,disablekb:1,iv_load_policy:3,fs:0,playsinline:1},
+      events:{
+        onReady:(e)=>{ e.target.mute(); e.target.playVideo(); },
+        onStateChange:(e)=>{ if(e.data===YT.PlayerState.ENDED){ e.target.seekTo(0); e.target.playVideo(); } }
+      }
     });
   });
 }
