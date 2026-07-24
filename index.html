@@ -226,6 +226,18 @@ body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--
 .vid-tab.active[data-type="example"]{background:var(--vexample-light);border-color:var(--vexample);color:var(--vexample);}
 .video-box{background:#000;border-radius:var(--r-md);aspect-ratio:16/9;display:flex;align-items:center;justify-content:center;margin-bottom:14px;overflow:hidden;border:0.5px solid var(--border);position:relative;}
 .video-box iframe{width:100%;height:100%;border:none;}
+.video-box #ytGifTarget{width:100%;height:100%;}
+.gif-controls{position:absolute;bottom:0;left:0;right:0;display:flex;align-items:center;gap:6px;padding:8px 10px;background:linear-gradient(to top, rgba(0,0,0,0.7), transparent);}
+.gif-ctrl-btn{flex-shrink:0;width:30px;height:30px;border-radius:50%;border:none;background:rgba(255,255,255,0.18);color:#fff;display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:14px;}
+.gif-ctrl-btn:hover{background:rgba(255,255,255,0.32);}
+.gif-speed-group{display:flex;gap:4px;flex:1;justify-content:center;flex-wrap:wrap;}
+.gif-speed-btn{padding:4px 9px;border-radius:12px;border:none;background:rgba(255,255,255,0.14);color:rgba(255,255,255,0.85);font-size:11px;font-weight:500;cursor:pointer;}
+.gif-speed-btn.active{background:#fff;color:#111;}
+.gif-speed-btn:hover:not(.active){background:rgba(255,255,255,0.28);}
+@media (max-width:480px){
+  .gif-ctrl-btn{width:34px;height:34px;} /* keep touch targets comfortable even though everything else shrinks */
+  .gif-speed-btn{padding:5px 8px;font-size:11px;}
+}
 .vid-ph{display:flex;flex-direction:column;align-items:center;gap:8px;background:var(--bg2);width:100%;height:100%;justify-content:center;}
 .vid-ph i{font-size:28px;color:var(--text3);}
 .vid-ph p{font-size:12px;color:var(--text3);}
@@ -1123,7 +1135,6 @@ const firebaseConfig = {
   appId: "1:4290375813:web:dde4fa566355e94f7279ec",
   measurementId: "G-QLP7W7R1YH"
 };
-
 /* ══════════════════════════════════════ */
 
 const app  = initializeApp(firebaseConfig);
@@ -3678,6 +3689,7 @@ function closeAdvPanel(){
 // Topic) shouldn't keep showing whatever sign was selected last time.
 function clearDetailPanel(){
   activeWord=null;
+  destroyGifPlayer();
   const rp=document.getElementById('rightPanel');
   if(rp) rp.innerHTML=`<div class="empty-state"><i class="ti ti-hand-finger"></i><p>Select a sign from the list<br>to view its videos and description.</p></div>`;
 }
@@ -3772,8 +3784,17 @@ function renderDetail(w){
 
   const ytId=safeYtId(curVidList[curVidIdx] && curVidList[curVidIdx].id);
   const videoHtml=ytId
-    ?`<iframe src="https://www.youtube.com/embed/${ytId}?rel=0" allow="accelerometer;autoplay;clipboard-write;encrypted-media;gyroscope;picture-in-picture" allowfullscreen></iframe>
-      <button style="position:absolute;bottom:10px;right:10px;background:rgba(0,0,0,0.55);border:none;border-radius:var(--r-sm);padding:5px 10px;color:white;font-size:11px;cursor:pointer;display:flex;align-items:center;gap:4px;" onclick="openFsModal('${ytId}')"><i class="ti ti-maximize"></i> Fullscreen</button>`
+    ?`<div id="ytGifTarget"></div>
+      <div class="gif-controls">
+        <button class="gif-ctrl-btn" id="gifPlayBtn" onclick="toggleGifPlay()" title="Play/Pause"><i class="ti ti-player-pause-filled"></i></button>
+        <div class="gif-speed-group" id="gifSpeedGroup">
+          <button class="gif-speed-btn" onclick="setGifSpeed(0.25,this)">0.25x</button>
+          <button class="gif-speed-btn" onclick="setGifSpeed(0.5,this)">0.5x</button>
+          <button class="gif-speed-btn active" onclick="setGifSpeed(1,this)">1x</button>
+          <button class="gif-speed-btn" onclick="setGifSpeed(1.5,this)">1.5x</button>
+        </div>
+        <button class="gif-ctrl-btn" onclick="openFsModal('${ytId}')" title="Fullscreen"><i class="ti ti-maximize"></i></button>
+      </div>`
     :`<div class="vid-ph"><i class="ti ti-video-off"></i><p>No video yet for <strong>${VID_META[activeVideoType].label}</strong></p></div>`;
 
   document.getElementById('rightPanel').innerHTML=`
@@ -3793,6 +3814,7 @@ function renderDetail(w){
       </div>
     </div>`;
   fbRating=0; fbType='';
+  if(ytId) initGifPlayer(ytId); else destroyGifPlayer();
 }
 
 /* ══ FEEDBACK SECTION (rating average + public comments + comment box) ══ */
@@ -3885,6 +3907,65 @@ function renderFeedbackSection(w){
     ${commentsHtml ? `<div class="fb-comment-list">${commentsHtml}</div>` : ''}
   `;
 }
+
+/* ══ "GIF-style" sign video player ══
+   The Dictionary shows each sign's video as something closer to a
+   looping, speed-adjustable GIF than a normal embedded YouTube player —
+   no YouTube controls/branding, autoplay + loop, custom play/pause and
+   speed buttons instead. Built on the YouTube IFrame Player API (needed
+   for programmatic play/pause/speed — URL params alone can't do that).
+   Only one sign video is ever shown at a time (renderDetail fully
+   replaces the panel on every tab/option/word change), so a single
+   global player instance is enough — no per-video bookkeeping needed. */
+let ytApiReady=false, ytApiLoading=false, ytGifPlayer=null, pendingGifYtId=null;
+
+function ensureYtApi(cb){
+  if(ytApiReady){ cb(); return; }
+  const prevCb = window.onYouTubeIframeAPIReady;
+  window.onYouTubeIframeAPIReady=()=>{ ytApiReady=true; if(typeof prevCb==='function') prevCb(); cb(); };
+  if(!ytApiLoading){
+    ytApiLoading=true;
+    const tag=document.createElement('script');
+    tag.src='https://www.youtube.com/iframe_api';
+    document.head.appendChild(tag);
+  }
+}
+
+function destroyGifPlayer(){
+  if(ytGifPlayer){ try{ ytGifPlayer.destroy(); }catch(e){} ytGifPlayer=null; }
+}
+
+function initGifPlayer(ytId){
+  destroyGifPlayer();
+  pendingGifYtId=ytId;
+  ensureYtApi(()=>{
+    // The detail panel may have re-rendered again (or navigated away)
+    // before the API finished loading — only proceed if this is still
+    // the video that should be showing, and its target div still exists.
+    if(pendingGifYtId!==ytId) return;
+    const target=document.getElementById('ytGifTarget');
+    if(!target) return;
+    ytGifPlayer=new YT.Player('ytGifTarget',{
+      videoId:ytId,
+      playerVars:{autoplay:1,controls:0,modestbranding:1,rel:0,disablekb:1,iv_load_policy:3,fs:0,loop:1,playlist:ytId,playsinline:1},
+      events:{ onReady:(e)=>{ e.target.playVideo(); } }
+    });
+  });
+}
+
+window.toggleGifPlay=function(){
+  if(!ytGifPlayer) return;
+  const btn=document.getElementById('gifPlayBtn');
+  const playing=ytGifPlayer.getPlayerState()===1; // 1 = YT.PlayerState.PLAYING
+  if(playing){ ytGifPlayer.pauseVideo(); if(btn) btn.innerHTML='<i class="ti ti-player-play-filled"></i>'; }
+  else { ytGifPlayer.playVideo(); if(btn) btn.innerHTML='<i class="ti ti-player-pause-filled"></i>'; }
+};
+
+window.setGifSpeed=function(rate,btnEl){
+  if(ytGifPlayer) ytGifPlayer.setPlaybackRate(rate);
+  btnEl.closest('#gifSpeedGroup')?.querySelectorAll('.gif-speed-btn').forEach(b=>b.classList.remove('active'));
+  btnEl.classList.add('active');
+};
 
 window.switchVideoTab=function(wId,type){ const w=WORDS.find(x=>x.id===wId); if(!w) return; activeVideoType=type; activeVideoIndices[type]=0; renderDetail(w); };
 window.switchVideoOption=function(wId,idx){ const w=WORDS.find(x=>x.id===wId); if(!w) return; activeVideoIndices[activeVideoType]=idx; renderDetail(w); };
