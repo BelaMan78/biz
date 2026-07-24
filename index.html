@@ -305,6 +305,8 @@ body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--
 .admin-tab-panel{display:none;}
 .admin-tab-panel.active{display:block;}
 .admin-table-wrap{padding:20px 24px;}
+.admin-table-search{display:flex;align-items:center;gap:8px;background:var(--bg2);border:0.5px solid var(--border2);border-radius:var(--r-md);padding:8px 12px;margin:20px 24px 0;color:var(--text3);max-width:340px;}
+.admin-table-search input{flex:1;border:none;outline:none;background:transparent;font-size:13px;color:var(--text);}
 .admin-table{width:100%;border-collapse:collapse;background:var(--bg);border-radius:var(--r-lg);overflow:hidden;border:0.5px solid var(--border);}
 .admin-table th{font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:0.06em;padding:10px 14px;border-bottom:0.5px solid var(--border);text-align:left;background:var(--bg2);font-weight:500;}
 .admin-table td{font-size:13px;padding:10px 14px;border-bottom:0.5px solid var(--border);color:var(--text);vertical-align:middle;}
@@ -798,12 +800,17 @@ body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--
   </div>
 
   <div class="admin-tab-panel active" id="apSigns">
+    <div class="admin-table-search">
+      <i class="ti ti-search"></i>
+      <input type="text" id="adminSearchInput" placeholder="Search signs..." oninput="onAdminSearchInput()"/>
+    </div>
     <div class="admin-table-wrap">
       <table class="admin-table">
         <thead><tr><th>Sign</th><th>Spanish</th><th>Category</th><th>Hand</th><th>Difficulty</th><th>Videos</th><th>Actions</th></tr></thead>
         <tbody id="adminTbody"></tbody>
       </table>
     </div>
+    <div class="word-list-pagination" id="adminTablePagination"></div>
   </div>
 
   <div class="admin-tab-panel" id="apOptions">
@@ -1127,7 +1134,6 @@ import { getAuth, onAuthStateChanged, signInWithEmailAndPassword, signInWithPopu
 /* ══════════════════════════════════════
    🔧 PASTE YOUR FIREBASE CONFIG HERE
 ══════════════════════════════════════ */
-
 
 const firebaseConfig = {
   apiKey: "AIzaSyDnHkZxAo-Q8LKOV6dSzCojfz9ZwlTKIaA",
@@ -4154,9 +4160,30 @@ window.openTeamReplyPrompt=async function(signId,feedbackId){
 };
 
 /* ══ ADMIN: SIGNS TABLE ══ */
+let adminTablePage=1;
+const ADMIN_TABLE_PAGE_SIZE=50;
+window.onAdminSearchInput=function(){ adminTablePage=1; renderAdminTable(); };
+window.goToAdminTablePage=function(page){
+  adminTablePage=page;
+  renderAdminTable();
+  document.querySelector('.admin-table-wrap')?.scrollTo(0,0);
+};
+
 function renderAdminTable(){
   document.getElementById('adminSub').textContent=`${WORDS.length} signs · ${CATEGORIES.length} categories · ${SPECIAL_TAGS.length} tags`;
-  document.getElementById('adminTbody').innerHTML=WORDS.map(w=>{
+
+  const q=(document.getElementById('adminSearchInput')?.value||'').trim().toLowerCase();
+  const filtered=q
+    ? WORDS.filter(w=>w.en.toLowerCase().includes(q)||(w.es||'').toLowerCase().includes(q))
+    : WORDS;
+  const sorted=[...filtered].sort((a,b)=>a.en.localeCompare(b.en,undefined,{sensitivity:'base'}));
+
+  const totalPages=Math.max(1,Math.ceil(sorted.length/ADMIN_TABLE_PAGE_SIZE));
+  adminTablePage=Math.min(Math.max(1,adminTablePage),totalPages);
+  const start=(adminTablePage-1)*ADMIN_TABLE_PAGE_SIZE;
+  const pageItems=sorted.slice(start,start+ADMIN_TABLE_PAGE_SIZE);
+
+  document.getElementById('adminTbody').innerHTML=pageItems.map(w=>{
     const cats=Array.isArray(w.cat)?w.cat:(w.cat?[w.cat]:[]);
     const cc=cats[0]?colorFor(cats[0]):CAT_C._default;
     const hands=Array.isArray(w.hand)?w.hand:(w.hand?[w.hand]:[]);
@@ -4175,7 +4202,25 @@ function renderAdminTable(){
         <button class="row-btn del" onclick="openDeleteModal('${w.id}')"><i class="ti ti-trash"></i> Delete</button>
       </div></td>
     </tr>`;
-  }).join('');
+  }).join('') || `<tr><td colspan="7" style="text-align:center;color:var(--text3);padding:24px;">No signs match "${esc(q)}"</td></tr>`;
+
+  renderAdminTablePagination(totalPages);
+}
+
+function renderAdminTablePagination(totalPages){
+  const pagEl=document.getElementById('adminTablePagination');
+  if(!pagEl) return;
+  if(totalPages<=1){ pagEl.innerHTML=''; return; }
+  const pages=[];
+  for(let p=1;p<=totalPages;p++){
+    if(p===1||p===totalPages||Math.abs(p-adminTablePage)<=1) pages.push(p);
+    else if(pages[pages.length-1]!=='…') pages.push('…');
+  }
+  const btn=(label,page,opts={})=>`<button class="wlp-btn${opts.active?' active':''}" ${opts.disabled?'disabled':''} ${page?`onclick="goToAdminTablePage(${page})"`:''}>${label}</button>`;
+  pagEl.innerHTML=
+    btn('<i class="ti ti-chevron-left"></i>',adminTablePage-1,{disabled:adminTablePage===1})+
+    pages.map(p=>p==='…'?`<span class="wlp-ellipsis">…</span>`:btn(String(p),p,{active:p===adminTablePage})).join('')+
+    btn('<i class="ti ti-chevron-right"></i>',adminTablePage+1,{disabled:adminTablePage===totalPages});
 }
 
 /* ══ CHIPS HELPER ══ */
