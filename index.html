@@ -230,6 +230,10 @@ body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--
 .gif-tap-catcher{position:absolute;inset:0;z-index:1;cursor:pointer;}
 .gif-controls{position:absolute;bottom:0;left:0;right:0;z-index:2;display:flex;align-items:center;gap:6px;padding:8px 10px;background:linear-gradient(to top, rgba(0,0,0,0.7), transparent);opacity:0;pointer-events:none;transition:opacity 0.15s ease;}
 .video-box:hover .gif-controls,.video-box.controls-visible .gif-controls{opacity:1;pointer-events:auto;}
+.gif-replay-overlay{position:absolute;inset:0;z-index:3;display:none;align-items:center;justify-content:center;cursor:pointer;background:#000;}
+.gif-replay-overlay.show{display:flex;}
+.gif-replay-overlay img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:0.55;}
+.gif-replay-icon{position:relative;width:52px;height:52px;border-radius:50%;background:rgba(0,0,0,0.55);color:#fff;display:flex;align-items:center;justify-content:center;font-size:24px;border:2px solid rgba(255,255,255,0.85);}
 .gif-ctrl-btn{flex-shrink:0;width:30px;height:30px;border-radius:50%;border:none;background:rgba(255,255,255,0.18);color:#fff;display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:14px;}
 .gif-ctrl-btn:hover{background:rgba(255,255,255,0.32);}
 .gif-speed-group{display:flex;gap:4px;flex:1;justify-content:center;flex-wrap:wrap;}
@@ -1127,7 +1131,6 @@ import { getAuth, onAuthStateChanged, signInWithEmailAndPassword, signInWithPopu
 /* ══════════════════════════════════════
    🔧 PASTE YOUR FIREBASE CONFIG HERE
 ══════════════════════════════════════ */
-
 
 const firebaseConfig = {
   apiKey: "AIzaSyDnHkZxAo-Q8LKOV6dSzCojfz9ZwlTKIaA",
@@ -3789,6 +3792,10 @@ function renderDetail(w){
   const ytId=safeYtId(curVidList[curVidIdx] && curVidList[curVidIdx].id);
   const videoHtml=ytId
     ?`<div id="ytGifTarget"></div>
+      <div class="gif-replay-overlay" onclick="replayGifVideo()">
+        <img src="" alt=""/>
+        <span class="gif-replay-icon"><i class="ti ti-player-play-filled"></i></span>
+      </div>
       <div class="gif-tap-catcher" onclick="toggleGifControlsVisible(event)"></div>
       <div class="gif-controls">
         <button class="gif-ctrl-btn" id="gifPlayBtn" onclick="toggleGifPlay()" title="Play/Pause"><i class="ti ti-player-pause-filled"></i></button>
@@ -3936,28 +3943,16 @@ function ensureYtApi(cb){
   }
 }
 
-let gifLoopWatcher=null;
-function stopGifLoopWatcher(){ if(gifLoopWatcher){ clearInterval(gifLoopWatcher); gifLoopWatcher=null; } }
-// These sign clips are usually only a second or two long, so checking
-// every 150ms is frequent enough to catch the last fraction of a second
-// and seek back to 0 *before* YouTube ever considers the video "ended" —
-// that's what keeps the player continuously in the PLAYING state and
-// avoids ever triggering YouTube's own center pause/replay icon.
-function startGifLoopWatcher(player){
-  stopGifLoopWatcher();
-  gifLoopWatcher=setInterval(()=>{
-    try{
-      const dur=player.getDuration(), cur=player.getCurrentTime();
-      if(dur>0 && cur>0 && dur-cur<0.35) player.seekTo(0,true);
-    }catch(e){}
-  },150);
-}
-
 function destroyGifPlayer(){
-  stopGifLoopWatcher();
   if(ytGifPlayer){ try{ ytGifPlayer.destroy(); }catch(e){} ytGifPlayer=null; }
 }
 
+// Plays once (muted autoplay), then — instead of looping by restarting the
+// video (which flashes YouTube's own native pause/replay icon at every
+// restart) — covers the finished video with our own fully OPAQUE replay
+// screen. Because our overlay is opaque and sits on top, whatever YouTube
+// is showing underneath at that point is completely hidden, not just
+// suppressed via player parameters. Tap/click the overlay to replay.
 function initGifPlayer(ytId){
   destroyGifPlayer();
   pendingGifYtId=ytId;
@@ -3972,15 +3967,27 @@ function initGifPlayer(ytId){
       videoId:ytId,
       playerVars:{autoplay:1,mute:1,controls:0,modestbranding:1,rel:0,disablekb:1,iv_load_policy:3,fs:0,playsinline:1},
       events:{
-        onReady:(e)=>{ e.target.mute(); e.target.playVideo(); startGifLoopWatcher(e.target); },
-        // Fallback only — the watcher below should always catch it first,
-        // but if a lag spike lets a video slip past the watcher and it
-        // genuinely reaches ENDED, still restart it rather than freezing.
-        onStateChange:(e)=>{ if(e.data===YT.PlayerState.ENDED){ e.target.seekTo(0); e.target.playVideo(); } }
+        onReady:(e)=>{ e.target.mute(); e.target.playVideo(); hideGifReplayOverlay(); },
+        onStateChange:(e)=>{ if(e.data===YT.PlayerState.ENDED) showGifReplayOverlay(ytId); }
       }
     });
   });
 }
+
+function showGifReplayOverlay(ytId){
+  const box=document.getElementById('ytGifTarget')?.closest('.video-box');
+  const overlay=box?.querySelector('.gif-replay-overlay');
+  if(!overlay) return;
+  overlay.querySelector('img').src=`https://img.youtube.com/vi/${ytId}/mqdefault.jpg`;
+  overlay.classList.add('show');
+}
+function hideGifReplayOverlay(){
+  document.querySelector('.gif-replay-overlay.show')?.classList.remove('show');
+}
+window.replayGifVideo=function(){
+  hideGifReplayOverlay();
+  if(ytGifPlayer){ ytGifPlayer.seekTo(0); ytGifPlayer.playVideo(); }
+};
 
 // Controls are hover-to-reveal on desktop (see .video-box:hover CSS), but
 // hover doesn't exist on touch devices. This gives touch users an
