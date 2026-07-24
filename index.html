@@ -1128,6 +1128,7 @@ import { getAuth, onAuthStateChanged, signInWithEmailAndPassword, signInWithPopu
    🔧 PASTE YOUR FIREBASE CONFIG HERE
 ══════════════════════════════════════ */
 
+
 const firebaseConfig = {
   apiKey: "AIzaSyDnHkZxAo-Q8LKOV6dSzCojfz9ZwlTKIaA",
   authDomain: "bizproject-cfdbc.firebaseapp.com",
@@ -1137,6 +1138,7 @@ const firebaseConfig = {
   appId: "1:4290375813:web:dde4fa566355e94f7279ec",
   measurementId: "G-QLP7W7R1YH"
 };
+
 
 /* ══════════════════════════════════════ */
 
@@ -2830,7 +2832,8 @@ document.addEventListener('click', e=>{
 /* ══ HANDSHAPE STRIP ══ */
 function buildHsGrid(){
   const grid=document.getElementById('hsGrid'); grid.innerHTML='';
-  const handSet=new Set(visibleWords().flatMap(w=>Array.isArray(w.hand)?w.hand:(w.hand?[w.hand]:[])));
+  const contextWords=visibleWords().filter(w=>wordMatchesFilters(w,{skipAZ:true}));
+  const handSet=new Set(contextWords.flatMap(w=>Array.isArray(w.hand)?w.hand:(w.hand?[w.hand]:[])));
   HANDSHAPES.forEach(h=>{
     const l=h.value;
     const has=handSet.has(l);
@@ -3058,6 +3061,7 @@ window.goToTopic=function(value){
     const sel=document.getElementById('f_topic');
     if(sel) sel.value=value;
   }
+  buildHsGrid();
   doFilter();
 };
 
@@ -3210,6 +3214,7 @@ window.goToCategoryOption=function(fieldId,value){
   clearDetailPanel();
   const sel=document.getElementById('f_cf_'+fieldId);
   if(sel) sel.value=value;
+  buildHsGrid();
   doFilter();
 };
 
@@ -3576,29 +3581,34 @@ let filteredWordList=[];
 let wordListPage=1;
 const WORD_LIST_PAGE_SIZE=50;
 
-window.doFilter=function(){
+// Shared by doFilter() and buildHsGrid(). skipAZ=true lets buildHsGrid ask
+// "what would match if I ignore the AZ letter itself" — i.e. the current
+// Topic/Category/search/etc context — so the AZ grid can grey out letters
+// that have zero signs in that context, instead of every letter always
+// looking available regardless of what's actually in the current Topic.
+function wordMatchesFilters(w, opts={}){
   const q=(document.getElementById('globalSearch').value||'').trim().toLowerCase();
   const fHand=document.getElementById('fHand')?.value||'';
   const fVid=document.getElementById('fVid')?.value||'';
-  const defs=allCategoryDefs();
+  if(q && !w.en.toLowerCase().includes(q) && !(w.es||'').toLowerCase().includes(q)) return false;
+  const hands=Array.isArray(w.hand)?w.hand:(w.hand?[w.hand]:[]);
+  if(!opts.skipAZ && activeAZ && !hands.includes(activeAZ)) return false;
+  if(fHand && !hands.includes(fHand)) return false;
+  if(fVid && !vidArr(w,fVid).length) return false;
+  if(activeSpecial.length && !activeSpecial.every(s=>(w.special||[]).includes(s))) return false;
+  for(const def of allCategoryDefs()){
+    const fVal=document.getElementById('f_'+def.key)?.value||'';
+    if(!fVal) continue;
+    const wVal=w[def.field];
+    if(def.type==='singleselect'){ if(wVal!==fVal) return false; }
+    else { const arr=Array.isArray(wVal)?wVal:(wVal?[wVal]:[]); if(!arr.includes(fVal)) return false; }
+  }
+  return true;
+}
 
+window.doFilter=function(){
   const words=visibleWords();
-  const list=words.filter(w=>{
-    if(q && !w.en.toLowerCase().includes(q) && !(w.es||'').toLowerCase().includes(q)) return false;
-    const hands=Array.isArray(w.hand)?w.hand:(w.hand?[w.hand]:[]);
-    if(activeAZ && !hands.includes(activeAZ)) return false;
-    if(fHand && !hands.includes(fHand)) return false;
-    if(fVid && !vidArr(w,fVid).length) return false;
-    if(activeSpecial.length && !activeSpecial.every(s=>(w.special||[]).includes(s))) return false;
-    for(const def of defs){
-      const fVal=document.getElementById('f_'+def.key)?.value||'';
-      if(!fVal) continue;
-      const wVal=w[def.field];
-      if(def.type==='singleselect'){ if(wVal!==fVal) return false; }
-      else { const arr=Array.isArray(wVal)?wVal:(wVal?[wVal]:[]); if(!arr.includes(fVal)) return false; }
-    }
-    return true;
-  }).sort((a,b)=>{
+  const list=words.filter(w=>wordMatchesFilters(w)).sort((a,b)=>{
     const av=(currentLang==='es'&&a.es)?a.es:a.en;
     const bv=(currentLang==='es'&&b.es)?b.es:b.en;
     return av.localeCompare(bv,undefined,{sensitivity:'base'});
@@ -3608,6 +3618,7 @@ window.doFilter=function(){
   filteredWordList=list;
   wordListPage=1; // any new search/filter always starts back at page 1
   renderWordListPage();
+  buildHsGrid(); // keep the AZ letter grid in sync with whatever's currently filtered (e.g. inside a Topic), not the whole dictionary
 };
 
 function renderWordListPage(){
