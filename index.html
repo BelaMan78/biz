@@ -457,7 +457,6 @@ body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--
 .video-box #ytGifTarget{width:100%;height:100%;}
 
 .gif-tap-catcher{position:absolute;inset:0;z-index:1;cursor:pointer;}
-.video-box:has(.gif-controls.kal-no-bridge) .gif-tap-catcher{display:none;} /* let clicks through to Kaltura's own controls */
 
 .gif-controls{position:absolute;bottom:0;left:0;right:0;z-index:2;display:flex;align-items:center;gap:6px;padding:8px 10px;background:linear-gradient(to top, rgba(0,0,0,0.7), transparent);opacity:0;pointer-events:none;transition:opacity 0.15s ease;}
 
@@ -482,8 +481,15 @@ body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--
 .gif-speed-btn.active{background:#fff;color:#111;}
 
 .gif-speed-btn:hover:not(.active){background:rgba(255,255,255,0.28);}
-.gif-controls.kal-no-bridge{display:none;} /* no confirmed control channel — fall back to the provider's own controls */
-.gif-speed-group.unsupported{display:none;}
+/* Gallaudet/Kaltura path: no custom buttons, just a gradient "curtain"
+   sitting over Kaltura's own native control strip. Hidden (curtain
+   visible) by default; fades away on hover so Kaltura's real controls
+   show through — pointer-events:none the whole time so clicks always
+   reach them, curtain or not. */
+.kal-curtain{position:absolute;left:0;right:0;bottom:0;height:54px;z-index:2;pointer-events:none;
+  background:linear-gradient(to top, rgba(10,10,10,0.94), rgba(10,10,10,0.75) 65%, transparent);
+  opacity:1;transition:opacity .18s ease;}
+.video-box:hover .kal-curtain, .video-box.controls-visible .kal-curtain{opacity:0;}
 
 @media (max-width:480px){
 
@@ -2272,10 +2278,6 @@ import { getAuth, onAuthStateChanged, signInWithEmailAndPassword, signInWithPopu
    🔧 PASTE YOUR FIREBASE CONFIG HERE
 
 ══════════════════════════════════════ */
-
-
-
-
 const firebaseConfig = {
   apiKey: "AIzaSyDnHkZxAo-Q8LKOV6dSzCojfz9ZwlTKIaA",
   authDomain: "bizproject-cfdbc.firebaseapp.com",
@@ -2285,7 +2287,6 @@ const firebaseConfig = {
   appId: "1:4290375813:web:dde4fa566355e94f7279ec",
   measurementId: "G-QLP7W7R1YH"
 };
-
 
 
 
@@ -2596,6 +2597,8 @@ function kalturaEmbedSrc(entryId, opts={}){
   const p=[];
 
   if(opts.autoplay) p.push('autoplay=true','autoPlay=true','flashvars[autoPlay]=true','autoMute=true','flashvars[autoMute]=true');
+
+  if(opts.loop) p.push('flashvars[loop]=true','loop=true');
 
   if(opts.hideChrome) p.push('flashvars[controlBarContainer.plugin]=false','flashvars[largePlayBtn.plugin]=false','flashvars[loadingSpinner.plugin]=false');
 
@@ -7639,9 +7642,17 @@ function renderDetail(w){
 
   window._curVidForFs = curVidSafe; // openFsModal reads this — see note by its call site below
 
-  const videoHtml=curVidSafe
+  const videoHtml=!curVidSafe
+
+    ?`<div class="vid-ph"><i class="ti ti-video-off"></i><p>No video yet for <strong>${VID_META[activeVideoType].label}</strong></p></div>`
+
+    : curVidSafe.src==='gallaudet'
 
     ?`<div id="ytGifTarget"></div>
+
+      <div class="kal-curtain"></div>`
+
+    :`<div id="ytGifTarget"></div>
 
       <div class="gif-replay-overlay" onclick="replayGifVideo()">
 
@@ -7671,9 +7682,7 @@ function renderDetail(w){
 
         <button class="gif-ctrl-btn" onclick="openFsModal(window._curVidForFs)" title="Fullscreen"><i class="ti ti-maximize"></i></button>
 
-      </div>`
-
-    :`<div class="vid-ph"><i class="ti ti-video-off"></i><p>No video yet for <strong>${VID_META[activeVideoType].label}</strong></p></div>`;
+      </div>`;
 
 
 
@@ -7919,15 +7928,7 @@ function renderFeedbackSection(w){
 
 let ytApiReady=false, ytApiLoading=false, ytGifPlayer=null, pendingGifYtId=null;
 
-// Kaltura side of the same "one video showing at a time" bookkeeping —
-
-// kalPlayer is the Player.js wrapper once (if) the postMessage bridge
-
-// connects; kalBridgeOk tracks whether our custom control bar is allowed
-
-// to be shown (only once we've actually confirmed we can drive the player).
-
-let kalPlayer=null, kalBridgeOk=false, pendingKalEntryId=null, playerJsReady=false, playerJsLoading=false;
+let pendingKalEntryId=null;
 
 
 
@@ -7955,49 +7956,11 @@ function ensureYtApi(cb){
 
 
 
-// Player.js (embedly's open postMessage spec) is how we drive the Kaltura
-
-// iframe from the host page without knowing Gallaudet's Kaltura partner ID —
-
-// see the comment above kalturaEmbedSrc for why the usual Kaltura JS API
-
-// (kWidget) isn't an option here.
-
-function ensurePlayerJs(cb){
-
-  if(playerJsReady){ cb(); return; }
-
-  if(!playerJsLoading){
-
-    playerJsLoading=true;
-
-    const tag=document.createElement('script');
-
-    tag.src='https://cdn.embed.ly/player-0.1.0.min.js';
-
-    tag.onload=()=>{ playerJsReady=true; cb(); };
-
-    tag.onerror=()=>{ /* left un-set; caller's own timeout handles this */ };
-
-    document.head.appendChild(tag);
-
-  } else {
-
-    const check=setInterval(()=>{ if(playerJsReady){ clearInterval(check); cb(); } },100);
-
-  }
-
-}
-
-
-
 function destroyGifPlayer(){
 
   if(ytGifPlayer){ try{ ytGifPlayer.destroy(); }catch(e){} ytGifPlayer=null; }
 
-  if(kalPlayer){ try{ kalPlayer.off(); }catch(e){} kalPlayer=null; }
-
-  kalBridgeOk=false; pendingKalEntryId=null;
+  pendingKalEntryId=null;
 
 }
 
@@ -8061,17 +8024,19 @@ function initGifPlayer(video){
 
 
 
-// Gallaudet/Kaltura path: start with plain autoplay+loop and NO chrome
+// Gallaudet/Kaltura path: no custom control bar — we just show Kaltura's
 
-// hidden yet (so the video is always watchable via Kaltura's own controls
+// own player (autoplay + best-effort loop via flashvars) and keep its
 
-// even if the bridge below never connects). Only once Player.js confirms
+// native control strip hidden behind a purely-visual "curtain" (see
 
-// it can actually drive the player do we swap in the chrome-hidden source
+// .kal-curtain CSS) that fades on hover, same feel as the YouTube GIF
 
-// and reveal our own hover control bar — otherwise the video would be
+// player's hover-controls without needing any cross-origin control
 
-// showing with literally no way to pause/seek it.
+// channel. Tap/click anywhere still reaches Kaltura's real buttons
+
+// underneath since the curtain is pointer-events:none.
 
 function initKalturaGifPlayer(entryId){
 
@@ -8081,63 +8046,17 @@ function initKalturaGifPlayer(entryId){
 
   if(!target) return;
 
-  target.innerHTML=`<iframe id="kalGifFrame" src="${kalturaEmbedSrc(entryId,{autoplay:true})}" allow="autoplay; fullscreen; encrypted-media" allowfullscreen frameborder="0" style="width:100%;height:100%;"></iframe>`;
+  target.innerHTML=`<iframe id="kalGifFrame" src="${kalturaEmbedSrc(entryId,{autoplay:true,loop:true})}" allow="autoplay; fullscreen; encrypted-media" allowfullscreen frameborder="0" style="width:100%;height:100%;"></iframe>`;
 
-  const controlsBar=document.getElementById('gifControlsBar');
+  // Touch devices have no hover — a tap fades the curtain the same way a
 
-  const speedGroup=document.getElementById('gifSpeedGroup');
+  // mouseenter would (and doesn't block the tap from also reaching
 
-  let settled=false;
+  // Kaltura's own controls, since nothing here calls preventDefault).
 
-  const fallback=setTimeout(()=>{
+  const box=target.closest('.video-box');
 
-    if(settled || pendingKalEntryId!==entryId) return;
-
-    settled=true;
-
-    // No confirmed control channel — leave Kaltura's own controls visible
-
-    // and hide our (non-functional) custom bar rather than show dead buttons.
-
-    controlsBar?.classList.add('kal-no-bridge');
-
-  },4000);
-
-  ensurePlayerJs(()=>{
-
-    if(pendingKalEntryId!==entryId) return;
-
-    const frame=document.getElementById('kalGifFrame');
-
-    if(!frame) return;
-
-    const p=new playerjs.Player(frame);
-
-    p.on('ready',()=>{
-
-      if(pendingKalEntryId!==entryId || settled) return;
-
-      settled=true; clearTimeout(fallback);
-
-      kalPlayer=p; kalBridgeOk=true;
-
-      // Now that we know we can control it, swap to the chrome-hidden
-
-      // source (brief restart is an acceptable trade-off) and mute it —
-
-      // muting only works reliably once we have the API, hence not doing
-
-      // it via URL params alone.
-
-      if(p.supports && p.supports('method','mute')) p.mute();
-
-      p.on('ended',()=>{ p.setCurrentTime(0); p.play(); });
-
-      if(!(p.supports && p.supports('method','setPlaybackRate'))) speedGroup?.classList.add('unsupported');
-
-    });
-
-  });
+  box?.addEventListener('touchstart', ()=>box.classList.add('controls-visible'), {passive:true, once:true});
 
 }
 
@@ -8181,9 +8100,11 @@ window.replayGifVideo=function(){
 
 // Bound to the transparent .gif-tap-catcher layer rather than the video
 
-// itself, because a cross-origin iframe (YouTube or Kaltura) swallows
+// itself, because a cross-origin YouTube iframe swallows clicks — they
 
-// clicks — they never bubble out to the parent page's own click handlers.
+// never bubble out to the parent page's own click handlers. (Not used on
+
+// the Kaltura path — see initKalturaGifPlayer's own touchstart handler.)
 
 window.toggleGifControlsVisible=function(e){
 
@@ -8195,23 +8116,9 @@ window.toggleGifControlsVisible=function(e){
 
 window.toggleGifPlay=function(){
 
-  const btn=document.getElementById('gifPlayBtn');
-
-  if(kalBridgeOk && kalPlayer){
-
-    kalPlayer.getPaused(paused=>{
-
-      if(paused){ kalPlayer.play(); if(btn) btn.innerHTML='<i class="ti ti-player-pause-filled"></i>'; }
-
-      else { kalPlayer.pause(); if(btn) btn.innerHTML='<i class="ti ti-player-play-filled"></i>'; }
-
-    });
-
-    return;
-
-  }
-
   if(!ytGifPlayer) return;
+
+  const btn=document.getElementById('gifPlayBtn');
 
   const playing=ytGifPlayer.getPlayerState()===1; // 1 = YT.PlayerState.PLAYING
 
@@ -8225,9 +8132,7 @@ window.toggleGifPlay=function(){
 
 window.setGifSpeed=function(rate,btnEl){
 
-  if(kalBridgeOk && kalPlayer && kalPlayer.setPlaybackRate) kalPlayer.setPlaybackRate(rate);
-
-  else if(ytGifPlayer) ytGifPlayer.setPlaybackRate(rate);
+  if(ytGifPlayer) ytGifPlayer.setPlaybackRate(rate);
 
   btnEl.closest('#gifSpeedGroup')?.querySelectorAll('.gif-speed-btn').forEach(b=>b.classList.remove('active'));
 
@@ -8767,6 +8672,38 @@ async function fetchYoutubeTitle(videoId){
 
 }
 
+// Kaltura MediaSpace ships a standard oEmbed endpoint (KMS accepts either
+
+// the full /media/{name}/{entryId} page URL or this shorter /id/{entryId}
+
+// form as the "url" param) — same idea as fetchYoutubeTitle above, just a
+
+// different provider. Wrapped the same defensive way since we can't
+
+// confirm from here whether Gallaudet's instance has anonymous oEmbed
+
+// access enabled.
+
+async function fetchGallaudetTitle(entryId){
+
+  if(!entryId) return '';
+
+  try{
+
+    const pageUrl=`https://${KALTURA_DOMAIN}/id/${entryId}`;
+
+    const res=await fetch(`https://${KALTURA_DOMAIN}/oembed?url=${encodeURIComponent(pageUrl)}&format=json`);
+
+    if(!res.ok) return '';
+
+    const data=await res.json();
+
+    return data.title||'';
+
+  }catch(e){ return ''; }
+
+}
+
 
 
 // Shared logic for both Topic and Category: match English name + YouTube
@@ -8793,11 +8730,11 @@ async function autoFillChipField(fieldKey, table, label){
 
   const firstRow=document.querySelector('#fVidHowList .vid-opt-row-wrap');
 
-  const firstIsYt=firstRow?.querySelector('.vid-opt-src')?.value!=='gallaudet';
+  const firstId=firstRow?.querySelector('.vid-opt-input')?.value?.trim();
 
-  const firstYtId=firstIsYt ? firstRow?.querySelector('.vid-opt-input')?.value?.trim() : '';
+  const firstIsGal=firstRow?.querySelector('.vid-opt-src')?.value==='gallaudet';
 
-  const ytTitle=firstYtId ? await fetchYoutubeTitle(firstYtId) : '';
+  const ytTitle=firstId ? (firstIsGal ? await fetchGallaudetTitle(firstId) : await fetchYoutubeTitle(firstId)) : '';
 
 
 
@@ -8867,15 +8804,17 @@ document.getElementById('fVidHowList')?.addEventListener('focusout', async (e)=>
 
   const videoId=e.target.value.trim();
 
+  const isGal=e.target.closest('.vid-opt-row-wrap')?.querySelector('.vid-opt-src')?.value==='gallaudet';
+
   if(videoId){
 
-    const ytTitle=await fetchYoutubeTitle(videoId);
+    const title=isGal ? await fetchGallaudetTitle(videoId) : await fetchYoutubeTitle(videoId);
 
     const fEnEl=document.getElementById('fEn');
 
-    if(ytTitle && fEnEl && !fEnEl.value.trim()){
+    if(title && fEnEl && !fEnEl.value.trim()){
 
-      fEnEl.value=ytTitle; // only fill if English name is still blank
+      fEnEl.value=title; // only fill if English name is still blank
 
       window.checkSignDataMatch?.(); // re-run the same logic that normally fires on manual typing (letter-rule Handshape + signData lookup)
 
