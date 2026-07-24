@@ -227,7 +227,9 @@ body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--
 .video-box{background:#000;border-radius:var(--r-md);aspect-ratio:16/9;display:flex;align-items:center;justify-content:center;margin-bottom:14px;overflow:hidden;border:0.5px solid var(--border);position:relative;}
 .video-box iframe{width:100%;height:100%;border:none;}
 .video-box #ytGifTarget{width:100%;height:100%;}
-.gif-controls{position:absolute;bottom:0;left:0;right:0;display:flex;align-items:center;gap:6px;padding:8px 10px;background:linear-gradient(to top, rgba(0,0,0,0.7), transparent);}
+.gif-tap-catcher{position:absolute;inset:0;z-index:1;cursor:pointer;}
+.gif-controls{position:absolute;bottom:0;left:0;right:0;z-index:2;display:flex;align-items:center;gap:6px;padding:8px 10px;background:linear-gradient(to top, rgba(0,0,0,0.7), transparent);opacity:0;pointer-events:none;transition:opacity 0.15s ease;}
+.video-box:hover .gif-controls,.video-box.controls-visible .gif-controls{opacity:1;pointer-events:auto;}
 .gif-ctrl-btn{flex-shrink:0;width:30px;height:30px;border-radius:50%;border:none;background:rgba(255,255,255,0.18);color:#fff;display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:14px;}
 .gif-ctrl-btn:hover{background:rgba(255,255,255,0.32);}
 .gif-speed-group{display:flex;gap:4px;flex:1;justify-content:center;flex-wrap:wrap;}
@@ -1135,6 +1137,7 @@ const firebaseConfig = {
   appId: "1:4290375813:web:dde4fa566355e94f7279ec",
   measurementId: "G-QLP7W7R1YH"
 };
+
 /* ══════════════════════════════════════ */
 
 const app  = initializeApp(firebaseConfig);
@@ -3785,6 +3788,7 @@ function renderDetail(w){
   const ytId=safeYtId(curVidList[curVidIdx] && curVidList[curVidIdx].id);
   const videoHtml=ytId
     ?`<div id="ytGifTarget"></div>
+      <div class="gif-tap-catcher" onclick="toggleGifControlsVisible(event)"></div>
       <div class="gif-controls">
         <button class="gif-ctrl-btn" id="gifPlayBtn" onclick="toggleGifPlay()" title="Play/Pause"><i class="ti ti-player-pause-filled"></i></button>
         <div class="gif-speed-group" id="gifSpeedGroup">
@@ -3952,6 +3956,16 @@ function initGifPlayer(ytId){
     });
   });
 }
+
+// Controls are hover-to-reveal on desktop (see .video-box:hover CSS), but
+// hover doesn't exist on touch devices. This gives touch users an
+// equivalent: tap the video to show the controls, tap it again to hide.
+// Bound to the transparent .gif-tap-catcher layer rather than the video
+// itself, because a cross-origin YouTube iframe swallows clicks — they
+// never bubble out to the parent page's own click handlers.
+window.toggleGifControlsVisible=function(e){
+  e.currentTarget.closest('.video-box')?.classList.toggle('controls-visible');
+};
 
 window.toggleGifPlay=function(){
   if(!ytGifPlayer) return;
