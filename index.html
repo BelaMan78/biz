@@ -1145,7 +1145,6 @@ const firebaseConfig = {
   measurementId: "G-QLP7W7R1YH"
 };
 
-
 /* ══════════════════════════════════════ */
 
 const app  = initializeApp(firebaseConfig);
@@ -3724,6 +3723,7 @@ window.selectWord=async function(id){
   activeWord=w.id; activeVideoType='how'; activeVideoIndices={how:0, concept:0, example:0};
   renderWordListPage();
   renderDetail(w); // render immediately with whatever's cached (fast UI)
+  document.getElementById('rightPanel')?.scrollTo(0,0);
   showMobileDetail(); // on mobile, slide from list to detail view
   await loadFeedbackForSign(id); // then refresh feedback async
   if(activeWord===id) renderDetail(w); // re-render only if still viewing same sign
@@ -3739,6 +3739,7 @@ window.showMobileDetail=function(){
   if(layout) layout.classList.add('mobile-detail-active');
   const bar=document.getElementById('mobileBackBar');
   if(bar) bar.classList.add('show');
+  window.scrollTo(0,0);
 };
 window.showMobileWordList=function(){
   const layout=document.querySelector('#pageDict .main-layout');
