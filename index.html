@@ -3951,8 +3951,8 @@ function initGifPlayer(ytId){
     if(!target) return;
     ytGifPlayer=new YT.Player('ytGifTarget',{
       videoId:ytId,
-      playerVars:{autoplay:1,controls:0,modestbranding:1,rel:0,disablekb:1,iv_load_policy:3,fs:0,loop:1,playlist:ytId,playsinline:1},
-      events:{ onReady:(e)=>{ e.target.playVideo(); } }
+      playerVars:{autoplay:1,mute:1,controls:0,modestbranding:1,rel:0,disablekb:1,iv_load_policy:3,fs:0,loop:1,playlist:ytId,playsinline:1},
+      events:{ onReady:(e)=>{ e.target.mute(); e.target.playVideo(); } }
     });
   });
 }
