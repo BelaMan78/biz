@@ -166,7 +166,7 @@ body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--
 .hs-all-btn{font-size:12px;padding:4px 14px;border-radius:20px;border:0.5px solid rgba(255,255,255,0.4);background:transparent;color:rgba(255,255,255,0.8);cursor:pointer;}
 .hs-all-btn:hover,.hs-all-btn.active{background:white;color:var(--accent);}
 .hs-label{font-size:11px;color:rgba(255,255,255,0.5);margin-left:8px;}
-.main-layout{display:grid;grid-template-columns:300px 1fr;min-height:calc(100vh - 141px);}
+.main-layout{display:grid;grid-template-columns:300px 1fr;min-height:calc(100vh - 141px);min-height:calc(100dvh - 141px);}
 .left{background:var(--bg);border-right:0.5px solid var(--border);display:flex;flex-direction:column;}
 .left-top{padding:12px 14px;border-bottom:0.5px solid var(--border);}
 .adv-btn{display:flex;align-items:center;gap:5px;padding:6px 11px;border:0.5px solid var(--border2);border-radius:var(--r-md);font-size:12px;color:var(--text2);cursor:pointer;background:var(--bg2);margin-top:8px;width:100%;justify-content:center;}
@@ -373,7 +373,7 @@ body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--
 .diff-row i{color:var(--text3);font-size:12px;}
 .modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.82);z-index:300;align-items:center;justify-content:center;flex-direction:column;gap:14px;}
 .modal-overlay.show{display:flex;}
-.modal-box{background:var(--bg);border-radius:var(--r-lg);padding:22px;width:min(560px,92vw);max-height:90vh;overflow-y:auto;}
+.modal-box{background:var(--bg);border-radius:var(--r-lg);padding:22px;width:min(560px,92vw);max-height:90vh;max-height:90dvh;overflow-y:auto;}
 .modal-title{font-size:16px;font-weight:500;margin-bottom:16px;display:flex;align-items:center;justify-content:space-between;}
 .modal-close-x{cursor:pointer;font-size:18px;color:var(--text3);}
 .modal-close-x:hover{color:var(--text);}
@@ -648,9 +648,9 @@ body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--
   .header-gallaudet-lockup{display:none;}
   .nav-item{font-size:12px;}
   .main-layout{min-height:0;} /* let content size naturally instead of forcing height:100vh-141px against a header that's now shorter than that number assumes */
-  .video-box{max-height:42vh;width:min(100%,calc(42vh * 16 / 9));margin:0 auto 10px;}
+  .video-box{max-height:65vh;max-height:65dvh;width:min(100%,calc(65vh * 16 / 9));width:min(100%,calc(65dvh * 16 / 9));margin:0 auto 10px;}
   .right{padding:14px 20px;}
-  .modal-box{max-height:96vh;padding:16px;}
+  .modal-box{max-height:96vh;max-height:96dvh;padding:16px;}
   .dict-context-bar{padding:10px 16px;}
   .dict-context-title{font-size:20px;}
   .mobile-back-bar{padding:6px 16px;}
@@ -1169,6 +1169,7 @@ const firebaseConfig = {
   appId: "1:4290375813:web:dde4fa566355e94f7279ec",
   measurementId: "G-QLP7W7R1YH"
 };
+
 /* ══════════════════════════════════════ */
 
 const app  = initializeApp(firebaseConfig);
@@ -5698,6 +5699,15 @@ window.vdExportCSV=function(){
   URL.revokeObjectURL(url);
   showToast('CSV exported');
 };
+
+// Some mobile browsers (iOS Safari especially) don't always fully repaint
+// after an orientation change, even once the CSS itself (dvh units, the
+// landscape media query) has the right values — occasionally leaving
+// stale blank space until something forces a reflow. A tiny scroll nudge
+// is a cheap, harmless way to force that repaint.
+window.addEventListener('orientationchange',()=>{
+  setTimeout(()=>{ window.scrollTo(0,0); document.body.style.display='none'; document.body.offsetHeight; document.body.style.display=''; },50);
+});
 
 init();
 </script>
