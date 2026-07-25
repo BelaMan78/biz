@@ -216,6 +216,16 @@ body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--
 .empty-state{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:360px;color:var(--text3);gap:10px;}
 .empty-state i{font-size:36px;}
 .empty-state p{font-size:13px;text-align:center;line-height:1.7;}
+.entry-header-row{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;}
+.entry-title-block{min-width:0;}
+.entry-nav-buttons{display:flex;gap:8px;flex-shrink:0;}
+.entry-nav-btn{display:flex;align-items:center;gap:4px;padding:8px 14px;border-radius:var(--r-md);border:1.5px solid var(--border2);background:var(--bg2);color:var(--text2);font-size:13px;font-weight:500;cursor:pointer;white-space:nowrap;}
+.entry-nav-btn:hover{border-color:var(--accent);color:var(--accent);background:var(--accent-light);}
+@media (max-width:768px){
+  .entry-header-row{flex-direction:column;}
+  .entry-nav-buttons{width:100%;}
+  .entry-nav-btn{flex:1;justify-content:center;padding:12px;font-size:14px;min-height:44px;}
+}
 .entry-en{font-size:22px;font-weight:500;color:var(--text);margin-bottom:2px;}
 .entry-en.solo{margin-bottom:12px;}
 .entry-en-secondary{font-size:16px;font-weight:400;color:var(--text2);}
@@ -510,6 +520,7 @@ body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--
   .mobile-search-bar{
     display:none;align-items:center;gap:8px;background:var(--bg);
     border-bottom:0.5px solid var(--border);padding:10px 14px;
+    position:relative;
   }
   .mobile-search-bar.show{display:flex;}
   .mobile-search-bar i{color:var(--text3);font-size:15px;}
@@ -724,6 +735,7 @@ body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--
 <div class="mobile-search-bar" id="mobileSearchBar">
   <i class="ti ti-search"></i>
   <input type="text" id="mobileGlobalSearch" placeholder="Search signs..." oninput="syncMobileSearch(this.value)"/>
+  <div class="search-autocomplete" id="mobileSearchAutocomplete"></div>
 </div>
 
 
@@ -1163,7 +1175,6 @@ import { getAuth, onAuthStateChanged, signInWithEmailAndPassword, signInWithPopu
    🔧 PASTE YOUR FIREBASE CONFIG HERE
 ══════════════════════════════════════ */
 
-
 const firebaseConfig = {
   apiKey: "AIzaSyDnHkZxAo-Q8LKOV6dSzCojfz9ZwlTKIaA",
   authDomain: "bizproject-cfdbc.firebaseapp.com",
@@ -1173,6 +1184,7 @@ const firebaseConfig = {
   appId: "1:4290375813:web:dde4fa566355e94f7279ec",
   measurementId: "G-QLP7W7R1YH"
 };
+
 /* ══════════════════════════════════════ */
 
 const app  = initializeApp(firebaseConfig);
@@ -2729,7 +2741,7 @@ window.syncMobileSearch=function(val){
   const desktop=document.getElementById('globalSearch');
   if(desktop) desktop.value=val;
   doFilter();
-  renderAcDropdown(val.trim());
+  renderMobileAcDropdown(val.trim());
 };
 
 window.showPage=function(p,extra){
@@ -3573,13 +3585,20 @@ function highlightMatch(text,q){
   if(idx===-1) return esc(text);
   return esc(text.slice(0,idx))+'<em>'+esc(text.slice(idx,idx+q.length))+'</em>'+esc(text.slice(idx+q.length));
 }
-function renderAcDropdown(q){
-  const dd=document.getElementById('searchAutocomplete'); if(!dd) return;
+function renderAcDropdownInto(ddId,q){
+  const dd=document.getElementById(ddId); if(!dd) return;
   const items=buildAcItems(q);
-  if(!items.length||!q){ dd.classList.remove('show'); dd.innerHTML=''; acFocusIndex=-1; return; }
+  if(!items.length||!q){ dd.classList.remove('show'); dd.innerHTML=''; return; }
   dd.innerHTML=items.map((it,i)=>`<div class="search-ac-item" data-id="${it.id}" onmousedown="acSelect('${it.id}')" onmouseover="acHover(${i})">${highlightMatch(it.label,q)}${it.sub?`<span style="font-size:11px;color:var(--text3);margin-left:6px;">${esc(it.sub)}</span>`:''}</div>`).join('');
-  dd.classList.add('show'); acFocusIndex=-1;
+  dd.classList.add('show');
 }
+function renderAcDropdown(q){ renderAcDropdownInto('searchAutocomplete',q); acFocusIndex=-1; }
+// Mobile has its own dropdown next to the mobile search bar, since the
+// desktop one (#searchAutocomplete) lives inside .header-search, which is
+// completely hidden on mobile — without this, searching while viewing a
+// sign's detail (word list hidden behind it) had visibly nothing happen,
+// even though doFilter() was quietly updating the (invisible) list underneath.
+function renderMobileAcDropdown(q){ renderAcDropdownInto('mobileSearchAutocomplete',q); }
 window.acSelect=function(id){
   closeAcDropdown();
   document.getElementById('globalSearch').value='';
@@ -3599,7 +3618,11 @@ window.acSelect=function(id){
   selectWord(id);
 };
 window.acHover=function(i){ acFocusIndex=i; document.querySelectorAll('#searchAutocomplete .search-ac-item').forEach((el,j)=>el.classList.toggle('focused',j===i)); };
-function closeAcDropdown(){ const dd=document.getElementById('searchAutocomplete'); if(dd){dd.classList.remove('show'); dd.innerHTML='';} acFocusIndex=-1; }
+function closeAcDropdown(){
+  const dd=document.getElementById('searchAutocomplete'); if(dd){dd.classList.remove('show'); dd.innerHTML='';}
+  const mdd=document.getElementById('mobileSearchAutocomplete'); if(mdd){mdd.classList.remove('show'); mdd.innerHTML='';}
+  acFocusIndex=-1;
+}
 window.onSearchInput=function(val){
   doFilter();
   renderAcDropdown(val.trim());
@@ -3612,7 +3635,7 @@ window.onSearchKeydown=function(e){
   else if(e.key==='Enter'){ if(acFocusIndex>=0 && items[acFocusIndex]){ acSelect(items[acFocusIndex].dataset.id); } }
   else if(e.key==='Escape'){ closeAcDropdown(); }
 };
-document.addEventListener('click',e=>{ if(!e.target.closest('.header-search')) closeAcDropdown(); });
+document.addEventListener('click',e=>{ if(!e.target.closest('.header-search') && !e.target.closest('.mobile-search-bar')) closeAcDropdown(); });
 
 
 let filteredWordList=[];
@@ -3785,6 +3808,15 @@ window.backToWordList=function(){
 };
 
 function renderDetail(w){
+  // Previous/Next Word navigation is based on position within the current
+  // filtered+sorted list (filteredWordList) — i.e. whatever Topic, search,
+  // or other filters are currently active — so it stays within the same
+  // context the user is browsing rather than jumping across the whole
+  // dictionary. Hidden at either end of the list (no prevId/nextId).
+  const navIdx=filteredWordList.findIndex(x=>x.id===w.id);
+  const prevId=navIdx>0?filteredWordList[navIdx-1].id:null;
+  const nextId=navIdx!==-1&&navIdx<filteredWordList.length-1?filteredWordList[navIdx+1].id:null;
+
   const dc=DIFF_C[w.diff]||CAT_C._default;
   const defs=allCategoryDefs();
   const pillsHtml=defs.filter(def=>!def.researcherOnly).map(def=>{
@@ -3855,10 +3887,18 @@ function renderDetail(w){
 
   document.getElementById('rightPanel').innerHTML=`
     <div class="detail-card">
-      ${currentLang==='es'&&w.es
-        ? `<p class="entry-en solo">${esc(w.es)} <span class="entry-en-secondary">| ${esc(w.en)}</span></p>`
-        : `<p class="entry-en">${esc(w.en)}</p>${w.es?`<p class="entry-es">${esc(w.es)}</p>`:''}`
-      }
+      <div class="entry-header-row">
+        <div class="entry-title-block">
+          ${currentLang==='es'&&w.es
+            ? `<p class="entry-en solo">${esc(w.es)} <span class="entry-en-secondary">| ${esc(w.en)}</span></p>`
+            : `<p class="entry-en">${esc(w.en)}</p>${w.es?`<p class="entry-es">${esc(w.es)}</p>`:''}`
+          }
+        </div>
+        <div class="entry-nav-buttons">
+          ${prevId?`<button class="entry-nav-btn" onclick="selectWord('${prevId}')" title="Previous word"><i class="ti ti-chevron-left"></i><span class="entry-nav-label">Previous</span></button>`:''}
+          ${nextId?`<button class="entry-nav-btn" onclick="selectWord('${nextId}')" title="Next word"><span class="entry-nav-label">Next Word</span><i class="ti ti-chevron-right"></i></button>`:''}
+        </div>
+      </div>
       <div class="entry-tags">${pillsHtml}${handPills}${specialPills}</div>
       <div class="vid-tabs">${tabs}</div>
       ${vidOptionsHtml}
