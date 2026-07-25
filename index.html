@@ -487,6 +487,7 @@ body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--
   .header-logo .signbiz-logo-icon{height:28px;width:auto;}
   .header-logo-text{font-size:13px;}
   .header-logo-sub{font-size:8px;}
+  .header-logo-gallaudet-line{display:none;} /* long line, was pushing search/lang/login off-screen on narrow portrait phones */
   .header-nav{
     display:none;
   }
@@ -1160,6 +1161,7 @@ import { getAuth, onAuthStateChanged, signInWithEmailAndPassword, signInWithPopu
    🔧 PASTE YOUR FIREBASE CONFIG HERE
 ══════════════════════════════════════ */
 
+
 const firebaseConfig = {
   apiKey: "AIzaSyDnHkZxAo-Q8LKOV6dSzCojfz9ZwlTKIaA",
   authDomain: "bizproject-cfdbc.firebaseapp.com",
@@ -1169,7 +1171,6 @@ const firebaseConfig = {
   appId: "1:4290375813:web:dde4fa566355e94f7279ec",
   measurementId: "G-QLP7W7R1YH"
 };
-
 /* ══════════════════════════════════════ */
 
 const app  = initializeApp(firebaseConfig);
