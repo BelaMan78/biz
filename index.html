@@ -1185,6 +1185,7 @@ const firebaseConfig = {
   measurementId: "G-QLP7W7R1YH"
 };
 
+
 /* ══════════════════════════════════════ */
 
 const app  = initializeApp(firebaseConfig);
@@ -3602,19 +3603,23 @@ function renderMobileAcDropdown(q){ renderAcDropdownInto('mobileSearchAutocomple
 window.acSelect=function(id){
   closeAcDropdown();
   document.getElementById('globalSearch').value='';
-  // Navigate to dictionary and open this word
-  if(!document.getElementById('pageDict').classList.contains('active')){
-    DICT_CONTEXT=null;
-    document.querySelectorAll('.page').forEach(el=>el.classList.remove('active'));
-    document.getElementById('pageDict').classList.add('active');
-    document.querySelectorAll('.nav-item').forEach(el=>el.classList.remove('active'));
-    document.querySelectorAll('.nav-item[data-page="dict"]').forEach(el=>el.classList.add('active'));
-    const searchWrap=document.querySelector('.header-search');
-    if(searchWrap) searchWrap.classList.add('hs-visible');
-    resetFilters();
-    closeAdvPanel();
-    renderDictContextBar();
-  }
+  const mSearch=document.getElementById('mobileGlobalSearch'); if(mSearch) mSearch.value='';
+  // Search is a global, cross-topic lookup — always clear whatever Topic/
+  // Category filter and context bar happen to be active right now, even
+  // if already on the Dictionary page. Otherwise a search result from a
+  // different topic than the one currently being browsed would show up
+  // still labeled with the old (wrong) topic in the context bar, and
+  // still restricted by the old topic's filter underneath.
+  DICT_CONTEXT=null;
+  document.querySelectorAll('.page').forEach(el=>el.classList.remove('active'));
+  document.getElementById('pageDict').classList.add('active');
+  document.querySelectorAll('.nav-item').forEach(el=>el.classList.remove('active'));
+  document.querySelectorAll('.nav-item[data-page="dict"]').forEach(el=>el.classList.add('active'));
+  const searchWrap=document.querySelector('.header-search');
+  if(searchWrap) searchWrap.classList.add('hs-visible');
+  resetFilters();
+  closeAdvPanel();
+  renderDictContextBar();
   selectWord(id);
 };
 window.acHover=function(i){ acFocusIndex=i; document.querySelectorAll('#searchAutocomplete .search-ac-item').forEach((el,j)=>el.classList.toggle('focused',j===i)); };
