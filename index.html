@@ -631,6 +631,30 @@ body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--
   .admin-table-wrap{overflow-x:auto;}
   .admin-table{min-width:760px;}
 }
+
+/* ══ Mobile landscape ══
+   Portrait breakpoints above are all width-based, which is the right
+   constraint for portrait — but rotate a phone to landscape and the
+   limiting dimension flips to HEIGHT (often only 320-430px), while width
+   is usually plenty (frequently enough to already clear the 768px
+   breakpoint and get the desktop grid layout, which is fine — the issue
+   is everything fixed/sticky eating into that short height). Target by
+   max-height + orientation so this only fires for actual phones in
+   landscape, not short desktop windows. */
+@media (max-height: 500px) and (orientation: landscape){
+  .header-logo{padding:8px 0;gap:6px;}
+  .signbiz-logo-icon{height:28px;}
+  .header-logo-sub,.header-logo-gallaudet-line{display:none;} /* reclaim vertical space — not worth 2 extra lines of subtitle when height is this tight */
+  .header-gallaudet-lockup{display:none;}
+  .nav-item{font-size:12px;}
+  .main-layout{min-height:0;} /* let content size naturally instead of forcing height:100vh-141px against a header that's now shorter than that number assumes */
+  .video-box{max-height:42vh;width:min(100%,calc(42vh * 16 / 9));margin:0 auto 10px;}
+  .right{padding:14px 20px;}
+  .modal-box{max-height:96vh;padding:16px;}
+  .dict-context-bar{padding:10px 16px;}
+  .dict-context-title{font-size:20px;}
+  .mobile-back-bar{padding:6px 16px;}
+}
 </style>
 </head>
 <body>
@@ -1145,7 +1169,6 @@ const firebaseConfig = {
   appId: "1:4290375813:web:dde4fa566355e94f7279ec",
   measurementId: "G-QLP7W7R1YH"
 };
-
 /* ══════════════════════════════════════ */
 
 const app  = initializeApp(firebaseConfig);
