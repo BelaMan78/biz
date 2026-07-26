@@ -1049,6 +1049,15 @@ body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--
         <textarea id="contactMessage" style="min-height:140px;" placeholder="Tell us what's on your mind..."></textarea>
       </div>
 
+      <!-- Honeypot: invisible to real visitors (off-screen, no label, not
+           tabbable), but a simple bot that blindly fills every field on
+           the page will typically fill this in too. If it has any value
+           on submit, we quietly drop the submission — see submitContactForm(). -->
+      <div style="position:absolute;left:-9999px;width:1px;height:1px;overflow:hidden;" aria-hidden="true">
+        <label for="contactHoneypot">Leave this field blank</label>
+        <input type="text" id="contactHoneypot" name="contactHoneypot" tabindex="-1" autocomplete="off"/>
+      </div>
+
       <!-- Error -->
       <div id="contactError" style="display:none;font-size:12px;color:var(--danger);margin-bottom:10px;padding:8px 12px;background:var(--danger-light);border-radius:var(--r-sm);"></div>
 
@@ -1170,6 +1179,8 @@ import { getFirestore, collection, doc, getDoc, getDocs, setDoc, deleteDoc, addD
   from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
 import { getAuth, onAuthStateChanged, signInWithEmailAndPassword, signInWithPopup, GoogleAuthProvider, signOut }
   from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js';
+import { initializeAppCheck, ReCaptchaV3Provider }
+  from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app-check.js';
 
 /* ══════════════════════════════════════
    🔧 PASTE YOUR FIREBASE CONFIG HERE
@@ -1189,6 +1200,26 @@ const firebaseConfig = {
 /* ══════════════════════════════════════ */
 
 const app  = initializeApp(firebaseConfig);
+
+/* ══════════════════════════════════════
+   🔧 APP CHECK — protects Firestore from scripted/bot traffic that
+   bypasses this website entirely and calls the Firestore API directly.
+   Steps to activate:
+   1. Firebase Console → Build → App Check → Apps → register this web app
+      → choose "reCAPTCHA v3" as the provider → it gives you a site key.
+   2. Paste that site key below, replacing 'PASTE_RECAPTCHA_V3_SITE_KEY_HERE'.
+   3. Back in the App Check console, start in "Unenforced" / monitoring
+      mode first for a few days to confirm real traffic isn't blocked,
+      THEN switch Firestore to "Enforced" once you're confident.
+   Until a real site key is pasted in, this safely does nothing harmful —
+   it just won't provide any protection yet. ══════════════════════════ */
+const RECAPTCHA_V3_SITE_KEY = '6LeYpmUtAAAAAKWjfC4USvC2-KsXEGwbmWVM47Bb';
+if(RECAPTCHA_V3_SITE_KEY && RECAPTCHA_V3_SITE_KEY!=='PASTE_RECAPTCHA_V3_SITE_KEY_HERE'){
+  try{
+    initializeAppCheck(app, { provider: new ReCaptchaV3Provider(RECAPTCHA_V3_SITE_KEY), isTokenAutoRefreshEnabled: true });
+  }catch(e){ console.error('App Check init failed:', e); }
+}
+
 const db   = getFirestore(app);
 const auth = getAuth(app);
 const gp   = new GoogleAuthProvider();
@@ -2239,6 +2270,7 @@ function renderContactSubPanelHtml(){
       `<div class="form-field" id="contactOrgField" style="display:none;"><label>Organisation / Institution *</label><input type="text" id="contactOrg" placeholder="School, university, or organisation name"/></div>`,
       `<div class="form-field"><label>Email address *</label><input type="email" id="contactEmail" placeholder="your@email.com"/></div>`,
       `<div class="form-field"><label>Message *</label><textarea id="contactMessage" style="min-height:140px;" placeholder="Tell us what is on your mind..."></textarea></div>`,
+      `<div style="position:absolute;left:-9999px;width:1px;height:1px;overflow:hidden;" aria-hidden="true"><label for="contactHoneypot">Leave this field blank</label><input type="text" id="contactHoneypot" name="contactHoneypot" tabindex="-1" autocomplete="off"/></div>`,
       `<div id="contactError" style="display:none;font-size:12px;color:var(--danger);margin-bottom:10px;padding:8px 12px;background:var(--danger-light);border-radius:var(--r-sm);"></div>`,
       `<div id="contactSuccess" style="display:none;font-size:13px;color:var(--success);padding:14px;background:var(--success-light);border-radius:var(--r-md);margin-bottom:10px;line-height:1.6;"></div>`,
       `<div style="display:flex;gap:8px;align-items:center;"><button class="btn btn-primary" id="contactSubmitBtn" onclick="submitContactForm()"><i class="ti ti-send"></i> Send message</button></div>`,
@@ -5458,6 +5490,20 @@ window.submitContactForm=async function(){
   const submitBtn=document.getElementById('contactSubmitBtn');
   errEl.style.display='none';
   successEl.style.display='none';
+
+  // Honeypot check — a real visitor never sees or fills this field, so any
+  // value here means a bot filled every input blindly. Silently pretend
+  // success (don't write anything, don't show an error) rather than
+  // telling the bot its submission was rejected — that just teaches it
+  // to look for a different tell to work around.
+  const honeypot=document.getElementById('contactHoneypot')?.value||'';
+  if(honeypot){
+    successEl.innerHTML=`<strong>Message sent!</strong> Thanks, ${esc(name||'there')}. We'll get back to you soon.`;
+    successEl.style.display='block';
+    document.querySelectorAll('input[name="contactType"]').forEach(r=>r.checked=false);
+    ['contactName','contactEmail','contactOrg','contactMessage','contactHoneypot'].forEach(id=>{ const el=document.getElementById(id); if(el) el.value=''; });
+    return;
+  }
 
   // Validate
   if(!type){ errEl.textContent='Please select a type of enquiry.'; errEl.style.display='block'; return; }
