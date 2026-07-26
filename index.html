@@ -1179,7 +1179,7 @@ import { getFirestore, collection, doc, getDoc, getDocs, setDoc, deleteDoc, addD
   from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
 import { getAuth, onAuthStateChanged, signInWithEmailAndPassword, signInWithPopup, GoogleAuthProvider, signOut }
   from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js';
-import { initializeAppCheck, ReCaptchaV3Provider }
+import { initializeAppCheck, ReCaptchaV3Provider, getToken }
   from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app-check.js';
 
 /* ══════════════════════════════════════
@@ -1195,7 +1195,6 @@ const firebaseConfig = {
   appId: "1:4290375813:web:dde4fa566355e94f7279ec",
   measurementId: "G-QLP7W7R1YH"
 };
-
 
 /* ══════════════════════════════════════ */
 
@@ -1214,10 +1213,27 @@ const app  = initializeApp(firebaseConfig);
    Until a real site key is pasted in, this safely does nothing harmful —
    it just won't provide any protection yet. ══════════════════════════ */
 const RECAPTCHA_V3_SITE_KEY = '6LeYpmUtAAAAAKWjfC4USvC2-KsXEGwbmWVM47Bb';
+let appCheckInstance=null;
 if(RECAPTCHA_V3_SITE_KEY && RECAPTCHA_V3_SITE_KEY!=='6LeYpmUtAAAAAKWjfC4USvC2-KsXEGwbmWVM47Bb'){
   try{
-    initializeAppCheck(app, { provider: new ReCaptchaV3Provider(RECAPTCHA_V3_SITE_KEY), isTokenAutoRefreshEnabled: true });
+    appCheckInstance=initializeAppCheck(app, { provider: new ReCaptchaV3Provider(RECAPTCHA_V3_SITE_KEY), isTokenAutoRefreshEnabled: true });
   }catch(e){ console.error('App Check init failed:', e); }
+}
+// Firestore attaches the App Check token to every request automatically
+// once initializeAppCheck() has run — but the very first token still
+// takes a moment to fetch from reCAPTCHA. Anything that reaches Firestore
+// before that finishes goes out unverified, which is what was showing up
+// as "unverified requests" in the App Check console. This lets init()
+// wait for that first token (capped at 3s so a reCAPTCHA hiccup can't
+// hang the whole site) before kicking off the initial Firestore reads.
+async function waitForAppCheckReady(){
+  if(!appCheckInstance) return;
+  try{
+    await Promise.race([
+      getToken(appCheckInstance),
+      new Promise(resolve=>setTimeout(resolve,3000))
+    ]);
+  }catch(e){ console.error('App Check token fetch failed, proceeding anyway:',e); }
 }
 
 const db   = getFirestore(app);
@@ -2684,6 +2700,7 @@ async function checkAdminDoc(user){
 }
 
 onAuthStateChanged(auth, async user=>{
+  await waitForAppCheckReady();
   currentUser=user;
   const adminData = user ? await checkAdminDoc(user) : null;
   isAdmin = !!adminData && adminData.role !== 'researcher';
@@ -5649,6 +5666,7 @@ window.deleteContactMsg=async function(id){
 
 /* ══ INIT ══ */
 async function init(){
+  await waitForAppCheckReady();
   dataLoadedPromise = loadAll();
   try{ await dataLoadedPromise; }
   catch(e){ console.error(e); showToast('⚠ Firebase connection error. Check your config and Firestore rules.'); }
