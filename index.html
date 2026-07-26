@@ -1214,7 +1214,7 @@ const app  = initializeApp(firebaseConfig);
    Until a real site key is pasted in, this safely does nothing harmful —
    it just won't provide any protection yet. ══════════════════════════ */
 const RECAPTCHA_V3_SITE_KEY = '6LeYpmUtAAAAAKWjfC4USvC2-KsXEGwbmWVM47Bb';
-if(RECAPTCHA_V3_SITE_KEY && RECAPTCHA_V3_SITE_KEY!=='PASTE_RECAPTCHA_V3_SITE_KEY_HERE'){
+if(RECAPTCHA_V3_SITE_KEY && RECAPTCHA_V3_SITE_KEY!=='6LeYpmUtAAAAAKWjfC4USvC2-KsXEGwbmWVM47Bb'){
   try{
     initializeAppCheck(app, { provider: new ReCaptchaV3Provider(RECAPTCHA_V3_SITE_KEY), isTokenAutoRefreshEnabled: true });
   }catch(e){ console.error('App Check init failed:', e); }
