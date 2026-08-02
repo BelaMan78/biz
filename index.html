@@ -1173,6 +1173,7 @@ body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--
 </div>
 
 <div class="toast" id="toast"></div>
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"></script>
 <script type="module">
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js';
 import { getFirestore, collection, doc, getDoc, getDocs, setDoc, deleteDoc, addDoc, query, where, orderBy, onSnapshot, writeBatch }
@@ -1321,6 +1322,35 @@ function safeYtId(id){ return String(id||'').replace(/[^A-Za-z0-9_-]/g,''); }
 // arbitrary JS in an admin's session. Stripping to the legit charset closes
 // this off entirely instead of just re-encoding it.
 function safeDocId(id){ return String(id||'').replace(/[^A-Za-z0-9_-]/g,''); }
+
+// The About Us pages (Mission/Conditions/Privacy/custom pages) use a
+// contenteditable rich-text editor and are saved/rendered as raw HTML
+// (siteContent/{fsKey}.body), unlike every other Firestore-sourced string
+// in this file which goes through esc() as plain text. That's necessary
+// for a WYSIWYG editor, but it means anyone who can write to `siteContent`
+// (any isAdmin — main or staff) can otherwise inject arbitrary HTML/JS
+// that then runs in the browser of every visitor, including other admins,
+// the moment they open that page. Editors are trusted, but this is exactly
+// the kind of field a phished/compromised staff account (or a stray
+// browser-preserved paste from an untrusted source) turns into a stored
+// XSS against the whole site — so we sanitize to an allow-list regardless
+// of who's writing it. Run on BOTH save (so bad HTML never reaches
+// Firestore) and render (defense in depth, in case older unsanitized
+// content is already stored).
+function sanitizeRichHtml(html){
+  if(typeof DOMPurify === 'undefined'){
+    // Fail closed: if the sanitizer library didn't load for some reason,
+    // don't fall back to trusting raw HTML — strip all tags instead.
+    console.error('DOMPurify unavailable — stripping all HTML as a fallback.');
+    return esc(String(html||''));
+  }
+  return DOMPurify.sanitize(String(html||''), {
+    ALLOWED_TAGS: ['b','strong','i','em','u','s','a','p','br','div','span',
+      'h1','h2','h3','ul','ol','li','blockquote','img','table','thead','tbody','tr','th','td'],
+    ALLOWED_ATTR: ['href','src','alt','title','style','target','rel'],
+    ALLOW_DATA_ATTR: false
+  });
+}
 
 // Built-in field metadata, keyed both by Firestore collection name and by the short key used
 // in the sign editor / filters. Written as functions (not cached objects) so they always read
@@ -2354,7 +2384,7 @@ function renderAboutSubPanel(sub){
           ${isCustomPage?`<button class="row-btn del" id="asDeleteBtn_${sub}" style="display:${isAdmin&&!pendingDelete?'flex':'none'};" onclick="openDeleteAboutPageModal('${sub}')"><i class="ti ti-trash"></i> Delete</button>`:''}
         </div>
       </div>
-      <div id="asBodyView_${sub}" class="aboutus-content-view">${content.body}</div>
+      <div id="asBodyView_${sub}" class="aboutus-content-view">${sanitizeRichHtml(content.body)}</div>
       <div id="asEditForm_${sub}" style="display:none;margin-top:16px;">
         <div class="form-field"><label>Page title</label><input type="text" id="asTitleInput_${sub}" value="${esc(content.title)}"/></div>
         <div style="margin-bottom:14px;">
@@ -2527,7 +2557,7 @@ window.confirmRteImageInsert=function(){
 
 window.enterAboutSubEdit=function(sub){
   const ed=document.getElementById('asRteBody_'+sub);
-  if(ed) ed.innerHTML=ABOUT_SUB_CONTENT[sub].body;
+  if(ed) ed.innerHTML=sanitizeRichHtml(ABOUT_SUB_CONTENT[sub].body);
   document.getElementById('asTitleInput_'+sub).value=ABOUT_SUB_CONTENT[sub].title;
   document.getElementById('asBodyView_'+sub).style.display='none';
   document.getElementById('asTitleView_'+sub).style.display='none';
@@ -2550,7 +2580,7 @@ window.saveAboutSub=async function(sub){
   // write, no toast, no error. Using allAboutDefs() covers both.
   const def=allAboutDefs().find(d=>d.key===sub); if(!def) return;
   const title=document.getElementById('asTitleInput_'+sub).value.trim()||def.defaultTitle;
-  const body=document.getElementById('asRteBody_'+sub).innerHTML;
+  const body=sanitizeRichHtml(document.getElementById('asRteBody_'+sub).innerHTML);
   showSaving(true);
   try{
     await setDoc(doc(db,'siteContent',def.fsKey),{title,body},{merge:true});
@@ -2703,7 +2733,7 @@ onAuthStateChanged(auth, async user=>{
   await waitForAppCheckReady();
   currentUser=user;
   const adminData = user ? await checkAdminDoc(user) : null;
-  isAdmin = !!adminData && adminData.role !== 'researcher';
+  isAdmin = !!adminData && (adminData.role==='main' || adminData.role==='staff');
   isMainAdmin = !!adminData && adminData.role==='main';
   isResearcher = !!adminData && adminData.role==='researcher';
   adminName = adminData?.name || user?.displayName || user?.email || '';
@@ -4449,6 +4479,847 @@ function guessFromKeywordTable(text, table){
   return Object.keys(table).filter(k=>table[k].some(kw=>t.includes(kw)));
 }
 
+/* ══ AUTO-SUGGEST SPANISH TRANSLATION (business/financial glossary lookup) ══ */
+// ⚠️ DRAFT — AI-assisted, covers all 800 terms from the financial literacy
+// glossary (TOPIC_KEYWORDS + BUSINESS_DOMAIN_KEYWORDS combined). NOT yet
+// reviewed by a bilingual finance/education professional. These are a
+// starting suggestion the admin can accept-as-is or correct, never an
+// authoritative source of truth for what gets taught to students. Known
+// limitations to weigh before trusting an entry as-is:
+//   1. Spanish financial terminology varies by region (Latin America vs.
+//      Spain, and even within Latin America) — most entries picked one
+//      common/neutral form where multiple legitimate options exist.
+//   2. Entries marked `// ⚑ review` (62 of them) are the ones most likely
+//      to need a second look — genuinely ambiguous words, terms with
+//      multiple valid translations depending on context, or ones where a
+//      wrong guess would actually teach something incorrect. Start review
+//      there rather than reading top to bottom.
+//   3. At this scale (800 terms, many single common words with no
+//      surrounding sentence for context) even the unflagged entries should
+//      be treated as "probably fine" rather than "verified" — this is a
+//      first pass to save typing, not a substitute for a bilingual
+//      reviewer signing off before it reaches students.
+// Keys are lowercase, matched against the exact text typed into the
+// English field (fEn) — same normalization style as guessFromKeywordTable.
+const BUSINESS_ES_GLOSSARY = {
+  'abandon':'abandonar',
+  'abatement':'reducción', // ⚑ review
+  'absorb':'absorber',
+  'acceleration':'aceleración',
+  'acceptance':'aceptación',
+  'access':'acceso',
+  'accident':'accidente',
+  'accommodation':'adaptación',
+  'account':'cuenta',
+  'accountability':'responsabilidad',
+  'accounting':'contabilidad',
+  'accounts receivable':'cuentas por cobrar',
+  'accrual':'devengo', // ⚑ review
+  'accumulated depreciation':'depreciación acumulada',
+  'acknowledgment':'reconocimiento',
+  'acquisition':'adquisición',
+  'actuary':'actuario',
+  'addendum':'anexo',
+  'adjust':'ajustar',
+  'adjustable rate':'tasa ajustable',
+  'advance':'anticipo',
+  'advantage':'ventaja',
+  'advertising':'publicidad',
+  'affiliated':'afiliado',
+  'affordable':'asequible',
+  'agency':'agencia',
+  'agent':'agente',
+  'aggressive':'agresivo',
+  'agreement':'acuerdo',
+  'agriculture':'agricultura',
+  'alimony':'pensión alimenticia',
+  'allegation':'alegación',
+  'allocation':'asignación',
+  'allowance':'provisión', // ⚑ review
+  'amend':'enmendar',
+  'amendment':'enmienda',
+  'amenities':'comodidades',
+  'amortization':'amortización',
+  'amount':'monto',
+  'analog':'analógico',
+  'analysis':'análisis',
+  'anchoring':'anclaje',
+  'annuity':'anualidad',
+  'application':'solicitud',
+  'appraisal':'tasación',
+  'appropriated expenditure':'gasto asignado',
+  'appropriation':'asignación presupuestaria',
+  'arbitration':'arbitraje',
+  'archive':'archivo',
+  'argument':'argumento',
+  'artificial intelligence':'inteligencia artificial',
+  'assembly':'ensamblaje',
+  'asset':'activo',
+  'assign':'asignar',
+  'assignment':'cesión', // ⚑ review
+  'association':'asociación',
+  'attrition':'desgaste', // ⚑ review
+  'auction':'subasta',
+  'auditing':'auditoría',
+  'authentication':'autenticación',
+  'authoritarian':'autoritario',
+  'authority':'autoridad',
+  'automation':'automatización',
+  'autopay':'pago automático',
+  'average':'promedio',
+  'award':'adjudicación', // ⚑ review
+  'backup':'respaldo',
+  'bad debt':'deuda incobrable',
+  'balance sheet':'balance general',
+  'balanced budget':'presupuesto equilibrado',
+  'balloon loan':'préstamo globo',
+  'bank':'banco',
+  'bankruptcy':'bancarrota',
+  'bar code':'código de barras',
+  'bargain':'ganga', // ⚑ review
+  'bargaining':'negociación',
+  'barrier':'barrera',
+  'barter':'trueque',
+  'base period':'período base',
+  'basic':'básico',
+  'basis':'base',
+  'bear':'bajista', // ⚑ review
+  'benchmark':'referencia', // ⚑ review
+  'beneficiary':'beneficiario',
+  'benefit':'beneficio',
+  'bid':'oferta',
+  'bill':'factura',
+  'binding':'vinculante',
+  'bitcoin':'bitcoin',
+  'block':'bloque',
+  'blockchain':'cadena de bloques',
+  'board of directors':'junta directiva',
+  'bond':'bono',
+  'bond premium':'prima de bono',
+  'bonus':'bonificación', // ⚑ review
+  'book value':'valor en libros',
+  'bookkeeper':'tenedor de libros',
+  'bounce':'rebotar',
+  'boundary':'límite',
+  'brand':'marca',
+  'breach':'incumplimiento',
+  'break even analysis':'análisis del punto de equilibrio',
+  'bribe':'soborno',
+  'broker':'corredor',
+  'brokerage':'correduría',
+  'budget deficit':'déficit presupuestario',
+  'buffer':'colchón',
+  'bull market':'mercado alcista',
+  'burden':'carga',
+  'bureaucracy':'burocracia',
+  'business':'negocio',
+  'buy':'comprar',
+  'buyout':'adquisición', // ⚑ review
+  'bylaws':'estatutos',
+  'byproduct':'subproducto',
+  'campaign':'campaña',
+  'cap':'tope', // ⚑ review
+  'capacity':'capacidad',
+  'capital':'capital',
+  'capital gains':'ganancias de capital',
+  'capitalism':'capitalismo',
+  'capitalization':'capitalización',
+  'capitalized value':'valor capitalizado',
+  'carryover':'arrastre', // ⚑ review
+  'cash':'efectivo',
+  'cash flow':'flujo de caja',
+  'cashier':'cajero',
+  'censure':'censura',
+  'centralization':'centralización',
+  'certificate of deposit':'certificado de depósito',
+  'charge':'cargo',
+  'charity':'caridad',
+  'check':'cheque',
+  'checking account':'cuenta corriente',
+  'child tax credit':'crédito tributario por hijos',
+  'civil law':'derecho civil',
+  'claim':'reclamo',
+  'clause':'cláusula',
+  'client':'cliente',
+  'collateral':'garantía',
+  'collusion':'colusión',
+  'commission':'comisión',
+  'commitment':'compromiso',
+  'commoditiy':'materia prima',
+  'common stock':'acción ordinaria',
+  'community':'comunidad',
+  'company':'empresa',
+  'comparability':'comparabilidad',
+  'competition':'competencia',
+  'complaint':'queja',
+  'compound interest':'interés compuesto',
+  'condominium':'condominio',
+  'conflict':'conflicto',
+  'consideration':'contraprestación', // ⚑ review
+  'consignment':'consignación',
+  'consistency':'consistencia',
+  'consolidation':'consolidación',
+  'construction':'construcción',
+  'consumer':'consumidor',
+  'contingency':'contingencia',
+  'contract':'contrato',
+  'contractor':'contratista',
+  'contribution':'contribución',
+  'control':'control',
+  'conventional':'convencional',
+  'conversion':'conversión',
+  'convertible':'convertible',
+  'cooperation':'cooperación',
+  'cooperative organization':'organización cooperativa',
+  'coordination':'coordinación',
+  'copay':'copago',
+  'copyright':'derechos de autor',
+  'corporate':'corporativo',
+  'cost':'costo',
+  'cost of goods sold':'costo de los bienes vendidos',
+  'coupon':'cupón',
+  'court':'tribunal',
+  'coverage':'cobertura',
+  'credit card':'tarjeta de crédito',
+  'credit score':'puntaje de crédito',
+  'cryptocurrency':'criptomoneda',
+  'culture':'cultura',
+  'customer':'cliente',
+  'customize':'personalizar',
+  'customs duty':'arancel aduanero',
+  'cycle':'ciclo',
+  'damage':'daño',
+  'data breach':'filtración de datos',
+  'deadline':'fecha límite',
+  'dealer':'distribuidor', // ⚑ review
+  'debit':'débito',
+  'debit card':'tarjeta de débito',
+  'debt':'deuda',
+  'debt security':'título de deuda',
+  'decentralization':'descentralización',
+  'decision':'decisión',
+  'declaration':'declaración',
+  'declare':'declarar',
+  'deductible':'deducible',
+  'deduction':'deducción',
+  'deed':'escritura',
+  'default':'incumplimiento',
+  'deferred':'diferido',
+  'deficit':'déficit',
+  'defined benefit plan':'plan de beneficios definidos',
+  'defined contribution plan':'plan de contribución definida',
+  'deflation':'deflación',
+  'deindustrialization':'desindustrialización',
+  'delegate':'delegar',
+  'delinquent':'moroso',
+  'delisting':'exclusión de la bolsa', // ⚑ review
+  'delivery':'entrega',
+  'demand':'demanda',
+  'demographics':'demografía',
+  'demolition':'demolición',
+  'department':'departamento',
+  'dependent':'dependiente',
+  'depletion':'agotamiento',
+  'deposit':'depósito',
+  'depreciation':'depreciación',
+  'depression':'depresión',
+  'deregulation':'desregulación',
+  'derivative':'derivado',
+  'description':'descripción',
+  'devaluation':'devaluación',
+  'development':'desarrollo',
+  'deviation':'desviación',
+  'digital':'digital',
+  'digital wallet':'billetera digital',
+  'digitalization':'digitalización',
+  'dilution':'dilución',
+  'diplomacy':'diplomacia',
+  'director':'director',
+  'disability':'discapacidad',
+  'disaster':'desastre',
+  'disbursement':'desembolso',
+  'disclaimer':'descargo de responsabilidad',
+  'disclosure':'divulgación',
+  'discontinuance':'descontinuación',
+  'discount':'descuento',
+  'discovery':'descubrimiento', // ⚑ review
+  'discrepancy':'discrepancia',
+  'discrimination':'discriminación',
+  'dismissal':'despido',
+  'dispute':'disputa',
+  'dissolution':'disolución',
+  'distribution':'distribución',
+  'distributor':'distribuidor',
+  'diversification':'diversificación',
+  'dividends':'dividendos',
+  'division':'división',
+  'document':'documento',
+  'domain':'dominio',
+  'domestic':'nacional', // ⚑ review
+  'dominant':'dominante',
+  'down payment':'pago inicial',
+  'due care':'diligencia debida',
+  'due date':'fecha de vencimiento',
+  'due diligence':'debida diligencia',
+  'duplicate':'duplicado',
+  'duty':'deber', // ⚑ review
+  'earnings':'ganancias',
+  'easement':'servidumbre',
+  'economics':'economía',
+  'economy':'economía',
+  'effective tax rate':'tasa impositiva efectiva',
+  'efficiency':'eficiencia',
+  'efficient':'eficiente',
+  'elect':'elegir',
+  'embargo':'embargo',
+  'embezzlement':'malversación',
+  'emergency fund':'fondo de emergencia',
+  'employee':'empleado',
+  'employer':'empleador',
+  'empowerment':'empoderamiento',
+  'endorsement':'endoso',
+  'endowment':'dotación',
+  'enterprise':'empresa',
+  'entity':'entidad',
+  'entrepreneur':'emprendedor',
+  'equity':'patrimonio',
+  'equity balance sheet':'balance de patrimonio',
+  'escrow':'depósito en garantía',
+  'escrow account':'cuenta en garantía',
+  'estimate':'estimación',
+  'estimated tax':'impuesto estimado',
+  'ethics':'ética',
+  'evaluator':'evaluador',
+  'evasion':'evasión',
+  'event':'evento',
+  'eviction':'desalojo',
+  'exchange rate':'tipo de cambio',
+  'exchange traded fund':'fondo cotizado en bolsa',
+  'excise tax':'impuesto especial',
+  'exclusion':'exclusión',
+  'execute':'ejecutar',
+  'executive':'ejecutivo',
+  'exemption':'exención',
+  'expansion':'expansión',
+  'expense':'gasto',
+  'expiration':'vencimiento',
+  'exploitation':'explotación',
+  'export':'exportación',
+  'exposure':'exposición',
+  'express contract':'contrato expreso',
+  'extension':'extensión',
+  'face value':'valor nominal',
+  'facility':'instalación',
+  'factor':'factor',
+  'factory':'fábrica',
+  'fair market':'mercado justo',
+  'fair trade':'comercio justo',
+  'fee':'tarifa',
+  'fiduciary':'fiduciario',
+  'field':'campo',
+  'finance':'finanzas',
+  'financial statements':'estados financieros',
+  'firm':'empresa',
+  'fiscal':'fiscal',
+  'fixed assets':'activos fijos',
+  'fixed expenses':'gastos fijos',
+  'flat expenses':'gastos uniformes', // ⚑ review
+  'flexible spending account':'cuenta de gastos flexibles',
+  'float':'flotación', // ⚑ review
+  'for profit corporation':'corporación con fines de lucro',
+  'foreclosure':'ejecución hipotecaria',
+  'forfeiture':'decomiso', // ⚑ review
+  'forgery':'falsificación',
+  'formal':'formal',
+  'former':'anterior',
+  'forward':'contrato a plazo', // ⚑ review
+  'fragmentation':'fragmentación',
+  'franchise':'franquicia',
+  'fraud':'fraude',
+  'fraud alert':'alerta de fraude',
+  'frequency':'frecuencia',
+  'function':'función',
+  'fund':'fondo',
+  'funding':'financiamiento',
+  'furlough':'suspensión temporal',
+  'globalization':'globalización',
+  'goal':'meta',
+  'good faith':'buena fe',
+  'goods':'bienes',
+  'goodwill':'plusvalía', // ⚑ review
+  'grace period':'período de gracia',
+  'grant':'subvención',
+  'gross domestic product gdp':'producto interno bruto',
+  'gross pay':'salario bruto',
+  'growth':'crecimiento',
+  'guaranty':'garantía',
+  'guardian':'tutor',
+  'guideline':'directriz',
+  'hazard insurance':'seguro contra riesgos',
+  'healthcare':'atención médica',
+  'hierarchy':'jerarquía',
+  'historical cost':'costo histórico',
+  'holding company':'sociedad controladora', // ⚑ review
+  'holding period':'período de tenencia',
+  'home equity':'valor líquido de la vivienda', // ⚑ review
+  'home office':'oficina en casa',
+  'homeowner':'propietario de vivienda',
+  'homework':'tarea',
+  'homogeneous':'homogéneo',
+  'honor':'honrar',
+  'horizontal expansion':'expansión horizontal',
+  'household':'hogar',
+  'human capital':'capital humano',
+  'human relations':'relaciones humanas',
+  'hybrid':'híbrido',
+  'hypothesis':'hipótesis',
+  'identity theft':'robo de identidad',
+  'illegal':'ilegal',
+  'illiquid':'ilíquido',
+  'import':'importación',
+  'improvement':'mejora',
+  'income':'ingreso',
+  'income tax':'impuesto sobre la renta',
+  'inflation':'inflación',
+  'influence':'influencia',
+  'infrastructure':'infraestructura',
+  'inherit':'heredar',
+  'inheritance':'herencia',
+  'initial':'inicial',
+  'initiative':'iniciativa',
+  'innovation':'innovación',
+  'input':'insumo',
+  'insider':'persona con información privilegiada', // ⚑ review
+  'inspection':'inspección',
+  'install':'instalar',
+  'installment':'cuota',
+  'instrument':'instrumento',
+  'insurance':'seguro',
+  'integrate':'integrar',
+  'integration':'integración',
+  'integrity':'integridad',
+  'intellectual property':'propiedad intelectual',
+  'intermediary':'intermediario',
+  'internal':'interno',
+  'interpolation':'interpolación',
+  'interview':'entrevista',
+  'inventory':'inventario',
+  'invest':'invertir',
+  'investment':'inversión',
+  'invoice':'factura',
+  'irrevocable':'irrevocable',
+  'issue of stocks':'emisión de acciones',
+  'itemized deduction':'deducción detallada',
+  'job':'empleo',
+  'joint':'conjunto',
+  'judgment':'sentencia',
+  'junior mortgage':'hipoteca subordinada',
+  'junk bond':'bono basura',
+  'junk debt':'deuda basura',
+  'justification':'justificación',
+  'key terms':'términos clave',
+  'know how':'conocimientos técnicos',
+  'labor':'mano de obra',
+  'labor union':'sindicato',
+  'laborintensive':'intensivo en mano de obra',
+  'landlord':'arrendador',
+  'latent':'latente',
+  'launch':'lanzamiento',
+  'law':'ley',
+  'lay off':'despedir',
+  'lease':'arrendamiento',
+  'lender':'prestamista',
+  'liabilities':'pasivos',
+  'limit':'límite',
+  'liquid asset':'activo líquido',
+  'liquidate':'liquidar',
+  'liquidation':'liquidación',
+  'liquidity':'liquidez',
+  'litigation':'litigio',
+  'loan':'préstamo',
+  'lobbyism':'cabildeo',
+  'local':'local',
+  'loophole':'vacío legal',
+  'loss':'pérdida',
+  'lottery':'lotería',
+  'lump sum':'suma global',
+  'luxury':'lujo',
+  'machinery':'maquinaria',
+  'macroeconomics':'macroeconomía',
+  'maintenance':'mantenimiento',
+  'malware':'malware',
+  'management':'gestión',
+  'manufacture':'fabricar',
+  'margin':'margen',
+  'marginal':'marginal',
+  'market':'mercado',
+  'market crash':'colapso del mercado',
+  'marketing':'mercadeo',
+  'markup':'margen de ganancia', // ⚑ review
+  'master budget':'presupuesto maestro',
+  'matching':'correspondencia', // ⚑ review
+  'materiality':'materialidad',
+  'materials':'materiales',
+  'maturity':'vencimiento',
+  'maturity value':'valor al vencimiento',
+  'mean':'media',
+  'media':'medios',
+  'mediation':'mediación',
+  'medicaid':'Medicaid',
+  'medicare':'Medicare',
+  'merchandise':'mercancía',
+  'merchant':'comerciante',
+  'merger':'fusión',
+  'merit':'mérito',
+  'middleman':'intermediario',
+  'mission':'misión',
+  'mobile banking':'banca móvil',
+  'mode':'moda',
+  'model':'modelo',
+  'monetary policy':'política monetaria',
+  'money':'dinero',
+  'money laundering':'lavado de dinero',
+  'monopoly':'monopolio',
+  'moral hazard':'riesgo moral',
+  'mortgage':'hipoteca',
+  'motivation':'motivación',
+  'multi factor authentication':'autenticación multifactor',
+  'mutual fund':'fondo mutuo',
+  'national':'nacional',
+  'national debt':'deuda nacional',
+  'nationalization':'nacionalización',
+  'negligence':'negligencia',
+  'negotiable':'negociable',
+  'negotiation':'negociación',
+  'neighborhood':'vecindario',
+  'net income':'ingreso neto',
+  'net loss':'pérdida neta',
+  'net sales':'ventas netas',
+  'net worth':'patrimonio neto',
+  'networking':'establecer contactos', // ⚑ review
+  'nominal return':'rendimiento nominal',
+  'norm':'norma',
+  'notarize':'notariar', // ⚑ review
+  'notice':'aviso',
+  'obsolescence':'obsolescencia',
+  'occupation':'ocupación',
+  'offer':'oferta',
+  'offshore':'en el extranjero', // ⚑ review
+  'oligopoly':'oligopolio',
+  'opportunity cost':'costo de oportunidad',
+  'organization':'organización',
+  'output':'producción', // ⚑ review
+  'outsourcing':'subcontratación',
+  'outstanding':'pendiente',
+  'outstanding check':'cheque pendiente de cobro',
+  'overdraft':'sobregiro',
+  'overdraft fee':'comisión por sobregiro',
+  'overtime':'horas extras',
+  'owner':'propietario',
+  'paid in capital':'capital pagado',
+  'paperwork':'papeleo',
+  'par value':'valor nominal',
+  'parent company':'empresa matriz',
+  'partnership':'sociedad',
+  'passive income':'ingreso pasivo',
+  'passive investing':'inversión pasiva',
+  'patent':'patente',
+  'payback':'recuperación', // ⚑ review
+  'paycheck':'cheque de pago',
+  'payment':'pago',
+  'payroll':'nómina',
+  'payroll tax':'impuesto sobre la nómina',
+  'peak economy':'auge económico', // ⚑ review
+  'penalty':'penalización',
+  'pension':'pensión',
+  'performance':'desempeño',
+  'period':'período',
+  'period cost':'costo del período',
+  'perpetual':'perpetuo',
+  'perpetuity':'perpetuidad',
+  'person':'persona',
+  'personal':'personal',
+  'personnel':'personal', // ⚑ review
+  'petty cash':'caja chica',
+  'phishing':'suplantación de identidad',
+  'pitch':'propuesta de venta', // ⚑ review
+  'plaintiff':'demandante',
+  'planned economy':'economía planificada',
+  'plant':'planta',
+  'pledge':'prenda', // ⚑ review
+  'policy':'póliza',
+  'pool':'fondo común',
+  'population':'población',
+  'portfolio':'cartera',
+  'portfolio beta':'beta de la cartera',
+  'power of attorney':'poder notarial',
+  'predatory lending':'préstamos abusivos',
+  'preferred stock':'acción preferente',
+  'premium':'prima',
+  'prevention':'prevención',
+  'price':'precio',
+  'price discrimination':'discriminación de precios',
+  'price index':'índice de precios',
+  'primary market':'mercado primario',
+  'principal debt':'deuda principal',
+  'priority':'prioridad',
+  'private law':'derecho privado',
+  'proactive':'proactivo',
+  'probability':'probabilidad',
+  'procurement':'adquisiciones',
+  'produce':'producir',
+  'product':'producto',
+  'production':'producción',
+  'productivity':'productividad',
+  'profession':'profesión',
+  'profit':'ganancia',
+  'project':'proyecto',
+  'promotion':'promoción',
+  'property':'propiedad',
+  'proprietary':'de propiedad exclusiva', // ⚑ review
+  'prospectus':'prospecto',
+  'prosperity':'prosperidad',
+  'protectionism':'proteccionismo',
+  'proxy':'poder', // ⚑ review
+  'public corporation':'corporación pública',
+  'public interest':'interés público',
+  'public law':'derecho público',
+  'purchase':'compra',
+  'purchasing power':'poder adquisitivo',
+  'qualified':'calificado',
+  'quality':'calidad',
+  'range':'rango',
+  'rating':'calificación',
+  'ratio':'razón', // ⚑ review
+  'rationalize':'racionalizar',
+  'raw material':'materia prima',
+  'real estate':'bienes raíces',
+  'realtor':'agente inmobiliario',
+  'rebate':'reembolso', // ⚑ review
+  'recapture':'recuperación', // ⚑ review
+  'receipt':'recibo',
+  'recession':'recesión',
+  'recognition':'reconocimiento',
+  'reconciliation':'conciliación',
+  'recovery':'recuperación',
+  'recruitment':'reclutamiento',
+  'redeem':'canjear',
+  'reduction':'reducción',
+  'redundancy':'redundancia',
+  'refinancing':'refinanciamiento',
+  'refund':'reembolso',
+  'register':'registrar',
+  'registration':'registro',
+  'regression':'regresión',
+  'regulation':'regulación',
+  'reimbursement':'reembolso',
+  'reinvestment':'reinversión',
+  'release':'liberación', // ⚑ review
+  'relevance':'relevancia',
+  'reliability':'confiabilidad',
+  'remainder':'remanente',
+  'remuneration':'remuneración',
+  'renewal':'renovación',
+  'rent':'alquiler',
+  'reorganization':'reorganización',
+  'repatriation':'repatriación',
+  'report':'informe',
+  'repurchase':'recompra',
+  'reputation':'reputación',
+  'rescind':'rescindir',
+  'research':'investigación',
+  'reserve':'reserva',
+  'resident':'residente',
+  'residual value':'valor residual',
+  'resolution':'resolución',
+  'resource':'recurso',
+  'responsibility':'responsabilidad',
+  'restitution':'restitución',
+  'restriction':'restricción',
+  'restructuring':'reestructuración',
+  'retail':'venta minorista', // ⚑ review
+  'retained earnings':'utilidades retenidas',
+  'retirement':'jubilación',
+  'retroactive':'retroactivo',
+  'return on investment':'retorno de la inversión',
+  'revaluation':'revalorización',
+  'revenue':'ingresos',
+  'revocation':'revocación',
+  'risk management':'gestión de riesgos',
+  'rollover':'traspaso', // ⚑ review
+  'roth ira':'cuenta Roth IRA', // ⚑ review
+  'routing number':'número de ruta bancaria',
+  'royalty':'regalía',
+  'résumé':'currículum',
+  'sabotage':'sabotaje',
+  'salary':'salario',
+  'sale':'venta',
+  'sample':'muestra',
+  'savings':'ahorros',
+  'savings account':'cuenta de ahorros',
+  'scarcity':'escasez',
+  'scholarship':'beca',
+  'screening':'evaluación', // ⚑ review
+  'seal':'sello',
+  'seasonality':'estacionalidad',
+  'securities':'valores',
+  'seed funding':'capital semilla',
+  'selection':'selección',
+  'selling':'venta',
+  'service':'servicio',
+  'settle':'saldar', // ⚑ review
+  'settlement':'liquidación',
+  'severance pay':'indemnización por despido',
+  'share':'acción',
+  'shareholder':'accionista',
+  'shell company':'empresa fantasma',
+  'shop':'tienda',
+  'shrinkage':'merma',
+  'simple interest':'interés simple',
+  'sinking fund':'fondo de amortización',
+  'skill':'habilidad',
+  'slack':'holgura',
+  'social security':'seguro social',
+  'socialism':'socialismo',
+  'sole proprietorship':'empresa unipersonal',
+  'solvency':'solvencia',
+  'sourcing':'abastecimiento',
+  'speculation':'especulación',
+  'spending':'gasto',
+  'sponsor':'patrocinador',
+  'spread':'diferencial', // ⚑ review
+  'stabilization':'estabilización',
+  'staff':'personal',
+  'stakeholder':'parte interesada',
+  'standalone':'independiente',
+  'standard':'estándar',
+  'startup':'empresa emergente',
+  'startup capital':'capital inicial',
+  'statement':'estado de cuenta',
+  'statistics':'estadística',
+  'stimulus':'estímulo',
+  'stock split':'división de acciones',
+  'stockholder':'accionista',
+  'storage':'almacenamiento',
+  'store':'tienda',
+  'strategy':'estrategia',
+  'strike':'huelga',
+  'structure':'estructura',
+  'subcontractor':'subcontratista',
+  'sublease':'subarrendamiento',
+  'subordination':'subordinación',
+  'subsidiary':'subsidiaria',
+  'subsidy':'subsidio',
+  'substitution':'sustitución',
+  'sunk cost':'costo hundido',
+  'supervisor':'supervisor',
+  'supplement':'suplemento',
+  'supplier':'proveedor',
+  'supply':'oferta',
+  'supply chain':'cadena de suministro',
+  'surplus':'superávit',
+  'survey':'encuesta',
+  'survive':'sobrevivir',
+  'suspension':'suspensión',
+  'swap':'permuta financiera',
+  'synergy':'sinergia',
+  'system':'sistema',
+  'takeover':'toma de control', // ⚑ review
+  'tangible':'tangible',
+  'target':'objetivo',
+  'targeting':'segmentación', // ⚑ review
+  'tariff':'arancel',
+  'tax return':'declaración de impuestos',
+  'tax shelter':'refugio fiscal',
+  'team':'equipo',
+  'technology':'tecnología',
+  'temporary':'temporal',
+  'tenant':'inquilino',
+  'tender':'licitación', // ⚑ review
+  'term':'plazo',
+  'term policy':'póliza a término',
+  'testing':'pruebas',
+  'third party':'tercero',
+  'through':'a través de', // ⚑ review
+  'title insurance':'seguro de título',
+  'title loan':'préstamo con garantía del título del vehículo',
+  'to exercise rights':'ejercer derechos',
+  'trade':'comercio',
+  'trademark':'marca registrada',
+  'training':'capacitación',
+  'transaction':'transacción',
+  'treasury':'tesorería',
+  'trend':'tendencia',
+  'trust organization':'organización fiduciaria', // ⚑ review
+  'trustee':'fiduciario',
+  'tuition':'matrícula',
+  'turnover':'rotación',
+  'umbrella policy':'póliza paraguas',
+  'underwriting':'suscripción', // ⚑ review
+  'unearned income revenue':'ingreso no devengado',
+  'unemployment':'desempleo',
+  'unilateral contract':'contrato unilateral',
+  'unit':'unidad',
+  'unlimited liability':'responsabilidad ilimitada',
+  'unofficial':'no oficial',
+  'unsecured debt':'deuda no garantizada',
+  'upfront payment':'pago por adelantado',
+  'upgrade':'actualización',
+  'us dollar':'dólar estadounidense',
+  'useful life':'vida útil',
+  'utilities':'servicios públicos',
+  'vacancy':'vacante',
+  'valid':'válido',
+  'valuation':'valoración',
+  'value':'valor',
+  'variable':'variable',
+  'variable expense':'gasto variable',
+  'variance':'varianza',
+  'variety':'variedad',
+  'vendor':'proveedor',
+  'venture':'empresa', // ⚑ review
+  'vesting':'adquisición de derechos', // ⚑ review
+  'void':'nulo',
+  'volatility':'volatilidad',
+  'volume':'volumen',
+  'voluntary':'voluntario',
+  'voting right':'derecho de voto',
+  'voucher':'comprobante',
+  'wage':'salario',
+  'waiver':'renuncia', // ⚑ review
+  'warehouse':'almacén',
+  'wares':'mercancías',
+  'warranty':'garantía',
+  'wealth':'riqueza',
+  'welfare':'bienestar social', // ⚑ review
+  'whistle blower':'denunciante',
+  'will':'testamento',
+  'window dressing':'maquillaje financiero', // ⚑ review
+  'wire transfer':'transferencia bancaria',
+  'withdrawal':'retiro',
+  'withholding':'retención',
+  'workers compensation':'compensación laboral',
+  'workforce':'fuerza laboral',
+  'write off':'cancelación contable', // ⚑ review
+  'yield':'rendimiento',
+};
+
+// Only fills fEs if it's still empty — never overwrites a value an admin
+// already typed or already reviewed. Silent no-op (no toast) when the
+// English term isn't in the glossary, so it doesn't nag on every sign that
+// isn't covered yet; the admin just types the Spanish in manually as before.
+function suggestSpanishFromInputs(){
+  const enEl=document.getElementById('fEn');
+  const esEl=document.getElementById('fEs');
+  if(!enEl || !esEl || esEl.value.trim()) return false;
+  const key=enEl.value.trim().toLowerCase().replace(/\s*\([^)]*\)\s*/g,'').trim();
+  const match=BUSINESS_ES_GLOSSARY[key];
+  if(!match) return false;
+  esEl.value=match;
+  showToast('Spanish auto-filled from glossary draft — please verify before saving');
+  return true;
+}
+
 async function fetchYoutubeTitle(videoId){
   if(!videoId) return '';
   try{
@@ -4500,6 +5371,7 @@ async function suggestCategoryFromInputs(){
 async function suggestFieldsFromInputs(){
   await suggestTopicFromInputs();
   await suggestCategoryFromInputs();
+  suggestSpanishFromInputs();
 }
 
 document.getElementById('fEn')?.addEventListener('blur', suggestFieldsFromInputs);
