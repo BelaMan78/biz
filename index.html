@@ -728,6 +728,7 @@ body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--
     <div class="header-user" id="headerUser" style="display:none;"></div>
     <button class="hdr-btn" id="navManageBtn" style="display:none;" onclick="toggleNavManageMode()"><i class="ti ti-arrows-move"></i> Manage nav</button>
     <button class="hdr-btn" id="adminNavBtn" style="display:none;" onclick="showPage('admin')"><i class="ti ti-settings"></i> Manage</button>
+    <button class="hdr-btn" id="rebuildSnapshotBtn" style="display:none;" onclick="manualRebuildSnapshot()" title="Rebuild the cached public copy of the dictionary that visitors load (normally happens automatically after every save — use this if something looks out of sync)"><i class="ti ti-refresh"></i> Rebuild snapshot</button>
     <button class="hdr-btn" id="loginNavBtn" onclick="showPage('login')"><i class="ti ti-login"></i> Login</button>
     <button class="hdr-btn" id="logoutBtn" style="display:none;" onclick="doLogout()"><i class="ti ti-logout"></i> Sign out</button>
   </div>
@@ -1410,6 +1411,96 @@ async function loadCollection(name){
   return snap.docs.map(d=>({id:d.id,...d.data()})).filter(d=>!d._hidden);
 }
 
+/* ══════════════════════════════════════
+   PUBLIC READ SNAPSHOT — cuts visitor Firestore reads
+   ══════════════════════════════════════
+   Reading the 8 content collections directly (signs/categories/topics/
+   difficulties/tags/handshapes/customFields/customFieldOptions) costs 1
+   Firestore read PER DOCUMENT returned. With ~1000 documents across those
+   collections, that's ~1000 reads every single time ANYONE opens the site
+   — 50 visitors a day is already 50,000 reads, i.e. the entire Spark-plan
+   daily quota, from page loads alone.
+   Fix: collapse those ~1000 document reads into a handful of documents
+   (`publicSnapshot/lists` + `publicSnapshot/dictionary_0`, `_1`, ...) that
+   already contain everything pre-serialized as JSON. A visitor's initial
+   load then costs as many reads as there are snapshot documents (usually
+   2-4) instead of ~1000 — same data, in a shape that costs almost nothing
+   to read.
+   The snapshot is regenerated from the in-memory globals (WORDS/
+   CATEGORIES/etc, not a fresh Firestore fetch — see call sites) every time
+   an admin actually changes something, so it's always at most one edit
+   behind live. If it's ever missing/stale/corrupt, loadAllPublic() falls
+   back to the direct 8-collection fetch automatically, so the site never
+   breaks — it just costs more reads on that one occasion.
+*/
+// Stay comfortably under Firestore's ~1 MiB per-document limit (leaves
+// headroom for field-name overhead and future growth of each sign's data).
+const SNAPSHOT_DICT_CHUNK_BYTES = 700000;
+
+function chunkDictionaryForSnapshot(words){
+  const enc=new TextEncoder();
+  const chunks=[]; let cur=[]; let curBytes=2; // account for [ ]
+  for(const w of words){
+    const wBytes=enc.encode(JSON.stringify(w)).length+1;
+    if(cur.length && curBytes+wBytes>SNAPSHOT_DICT_CHUNK_BYTES){ chunks.push(cur); cur=[]; curBytes=2; }
+    cur.push(w); curBytes+=wBytes;
+  }
+  chunks.push(cur); // always at least one chunk, even if empty
+  return chunks;
+}
+
+// Fire-and-forget by design: called right after an admin write already
+// succeeded (or after loadAll() refreshes the working globals), using
+// whatever is CURRENTLY in WORDS/CATEGORIES/etc — no extra Firestore read.
+// Failures are logged, not surfaced to the admin, and never block their
+// save — worst case, visitors keep serving the previous (still-correct-
+// enough) snapshot until the next successful write retries this.
+async function regeneratePublicSnapshot(){
+  try{
+    const listsPayload=JSON.stringify({
+      categories:CATEGORIES, topics:TOPICS, difficulties:DIFFICULTIES,
+      tags:SPECIAL_TAGS, handshapes:HANDSHAPES,
+      customFields:CUSTOM_FIELDS, customFieldOptions:CUSTOM_OPTIONS
+    });
+    const chunks=chunkDictionaryForSnapshot(WORDS);
+    await Promise.all([
+      setDoc(doc(db,'publicSnapshot','lists'), {json:listsPayload, updatedAt:Date.now()}),
+      ...chunks.map((c,i)=>setDoc(doc(db,'publicSnapshot','dictionary_'+i), {json:JSON.stringify(c), updatedAt:Date.now()})),
+      setDoc(doc(db,'publicSnapshot','dictionary_meta'), {chunkCount:chunks.length, updatedAt:Date.now()})
+    ]);
+  }catch(err){
+    console.error('regeneratePublicSnapshot failed — visitors will keep using the last good snapshot until a future save succeeds:', err);
+  }
+}
+
+// What every ordinary visitor actually calls at startup. Reads the cheap
+// publicSnapshot/* docs (2-4 reads total, regardless of dictionary size).
+// Falls back to the expensive direct fetch ONLY if the snapshot doesn't
+// exist yet (brand-new deployment) or fails to parse — then immediately
+// tries to (re)build it so the next visitor gets the cheap path.
+async function loadAllPublic(){
+  try{
+    const metaSnap=await getDoc(doc(db,'publicSnapshot','dictionary_meta'));
+    if(!metaSnap.exists()) throw new Error('no snapshot yet');
+    const chunkCount=metaSnap.data().chunkCount||0;
+    const [listsSnap, ...dictSnaps]=await Promise.all([
+      getDoc(doc(db,'publicSnapshot','lists')),
+      ...Array.from({length:chunkCount},(_,i)=>getDoc(doc(db,'publicSnapshot','dictionary_'+i)))
+    ]);
+    if(!listsSnap.exists()) throw new Error('snapshot lists doc missing');
+    const lists=JSON.parse(listsSnap.data().json);
+    CATEGORIES=lists.categories||[]; TOPICS=lists.topics||[]; DIFFICULTIES=lists.difficulties||[];
+    SPECIAL_TAGS=lists.tags||[]; HANDSHAPES=lists.handshapes||[];
+    CUSTOM_FIELDS=lists.customFields||[]; CUSTOM_OPTIONS=lists.customFieldOptions||[];
+    WORDS=dictSnaps.flatMap(s=>s.exists()?JSON.parse(s.data().json):[]);
+    sortHandshapes();
+  }catch(err){
+    console.warn('Public snapshot unavailable, falling back to direct read (this costs ~1 read per document, once):', err);
+    await loadAll();
+    regeneratePublicSnapshot(); // best-effort: build it now so next time is cheap
+  }
+}
+
 // ELAN sign-data lookup table (signData/{WORD} → {tokens:[...]}). Loaded once
 // at startup into a plain object keyed by uppercase word, exactly like the
 // old hardcoded SIGN_DATA constant — just sourced from Firestore now so new
@@ -1947,6 +2038,14 @@ async function loadAll(){
   }
 
   sortHandshapes();
+
+  // loadAll() does the expensive direct 8-collection read (~1 Firestore
+  // read per document) — after my read-cost fix, ordinary visitors never
+  // call this anymore (see loadAllPublic()); only admin-triggered refreshes
+  // do (login, approve/reject review, manual "Refresh"). Since we already
+  // paid for a fully fresh read here, piggyback a snapshot rebuild on it so
+  // the cheap public snapshot never drifts far behind reality.
+  regeneratePublicSnapshot();
 }
 
 function sortHandshapes(){
@@ -1985,6 +2084,35 @@ async function addValue(colName, value, extra={}){
 
 // data = partial fields being changed (e.g. {value:'X'} or {image:b64}).
 // label = human-readable name shown in the Pending Review queue.
+// Keeps the in-memory globals (WORDS/CATEGORIES/etc) correct immediately
+// after a write, WITHOUT a network refetch, so regeneratePublicSnapshot()
+// (called right after these) always serializes the up-to-date state.
+// Reassigns the actual module-level `let` binding in each branch (rather
+// than mutating a reference handed back from a lookup) so it stays correct
+// even where callers elsewhere also reassign WORDS/CATEGORIES/etc wholesale.
+function patchGlobalAfterSave(colName, id, newData){
+  const upsert=(arr)=>{ const i=arr.findIndex(x=>String(x.id)===String(id)); if(i!==-1){ arr[i]=newData; } else { arr.push(newData); } return arr; };
+  if(colName==='signs') upsert(WORDS);
+  else if(colName==='categories') upsert(CATEGORIES);
+  else if(colName==='topics') upsert(TOPICS);
+  else if(colName==='difficulties') upsert(DIFFICULTIES);
+  else if(colName==='tags') upsert(SPECIAL_TAGS);
+  else if(colName==='handshapes'){ upsert(HANDSHAPES); sortHandshapes(); }
+  else if(colName==='customFields') upsert(CUSTOM_FIELDS);
+  else if(colName==='customFieldOptions') upsert(CUSTOM_OPTIONS);
+}
+function patchGlobalAfterDelete(colName, id){
+  const drop=(arr)=>arr.filter(x=>String(x.id)!==String(id));
+  if(colName==='signs') WORDS=drop(WORDS);
+  else if(colName==='categories') CATEGORIES=drop(CATEGORIES);
+  else if(colName==='topics') TOPICS=drop(TOPICS);
+  else if(colName==='difficulties') DIFFICULTIES=drop(DIFFICULTIES);
+  else if(colName==='tags') SPECIAL_TAGS=drop(SPECIAL_TAGS);
+  else if(colName==='handshapes') HANDSHAPES=drop(HANDSHAPES);
+  else if(colName==='customFields') CUSTOM_FIELDS=drop(CUSTOM_FIELDS);
+  else if(colName==='customFieldOptions') CUSTOM_OPTIONS=drop(CUSTOM_OPTIONS);
+}
+
 async function updateValueDoc(colName, id, data, label){
   showSaving(true);
   try{
@@ -1992,6 +2120,8 @@ async function updateValueDoc(colName, id, data, label){
     const before = snap.exists() ? {id, ...snap.data()} : {id};
     const after = {...before, ...data};
     await submitEditWithReview(colName, id, label||before.value, before, after);
+    patchGlobalAfterSave(colName, id, after);
+    regeneratePublicSnapshot();
   }
   catch(err){ console.error(err); showToast('⚠ Could not save. Try again.'); }
   finally{ showSaving(false); }
@@ -2003,6 +2133,8 @@ async function deleteValueDoc(colName, id, label){
     const snap = await getDoc(doc(db,colName,id));
     const fullData = snap.exists() ? {id, ...snap.data()} : {id};
     await submitDeleteWithReview(colName, id, label||fullData.value, fullData);
+    patchGlobalAfterDelete(colName, id);
+    regeneratePublicSnapshot();
   }
   catch(err){ console.error(err); showToast('⚠ Could not delete. Try again.'); }
   finally{ showSaving(false); }
@@ -2013,6 +2145,8 @@ async function saveWord(w){
   try{
     const before = WORDS.find(x=>String(x.id)===String(w.id)) || {id:w.id};
     await submitEditWithReview('signs', w.id, w.en||before.en, before, w);
+    patchGlobalAfterSave('signs', w.id, w);
+    regeneratePublicSnapshot();
   }
   catch(err){ console.error(err); showToast('⚠ Could not save sign.'); }
   finally{ showSaving(false); }
@@ -2022,6 +2156,8 @@ async function deleteWordDoc(id){
   try{
     const fullData = WORDS.find(x=>String(x.id)===String(id)) || {id};
     await submitDeleteWithReview('signs', id, fullData.en, fullData);
+    patchGlobalAfterDelete('signs', id);
+    regeneratePublicSnapshot();
   }
   catch(err){ console.error(err); showToast('⚠ Could not delete.'); }
   finally{ showSaving(false); }
@@ -2712,6 +2848,24 @@ window.loginGoogle=async function(){ try{ await signInWithPopup(auth,gp); }catch
 window.cancelLogin=function(){ showPage('dict'); };
 window.doLogout=async function(){ await signOut(auth); isAdmin=false; showToast('Signed out'); };
 
+// Manual escape hatch for Main Admin — normally the snapshot rebuilds
+// itself automatically after every save (see regeneratePublicSnapshot()
+// call sites), so this button should rarely be needed. Useful for: the
+// very first deploy (publicSnapshot doesn't exist yet), or self-healing
+// after a failed background rebuild (e.g. a save succeeded but the
+// snapshot write silently failed due to a transient network error).
+window.manualRebuildSnapshot=async function(){
+  showSaving(true);
+  try{
+    await loadAll(); // fresh direct read of all 8 collections + auto-regenerates the snapshot at the end
+    showToast('Public snapshot rebuilt from the latest data.');
+  }catch(err){
+    console.error(err);
+    showToast('⚠ Could not rebuild snapshot. Check the console for details.');
+  }
+  showSaving(false);
+};
+
 // Lightweight Google sign-in used from inside the comment box (not the admin login page)
 window.loginGoogleForComment=async function(signId){
   try{ await signInWithPopup(auth,gp); }
@@ -2760,7 +2914,8 @@ onAuthStateChanged(auth, async user=>{
   };
   await loadUserPrefs();
   const uEl=document.getElementById('headerUser'), aBtn=document.getElementById('adminNavBtn'),
-        lBtn=document.getElementById('loginNavBtn'), oBtn=document.getElementById('logoutBtn');
+        lBtn=document.getElementById('loginNavBtn'), oBtn=document.getElementById('logoutBtn'),
+        rBtn=document.getElementById('rebuildSnapshotBtn');
   if(user){
     const roleBadge = isMainAdmin ? `<span style="font-size:10px;padding:2px 7px;border-radius:20px;background:rgba(255,255,255,0.25);color:white;font-weight:600;">Main Admin</span>`
       : isAdmin ? `<span style="font-size:10px;padding:2px 7px;border-radius:20px;background:rgba(255,255,255,0.2);color:white;font-weight:600;">Staff</span>`
@@ -2769,10 +2924,12 @@ onAuthStateChanged(auth, async user=>{
     uEl.style.display='flex';
     uEl.innerHTML=(user.photoURL?`<img src="${esc(user.photoURL)}"/>`:`<i class="ti ti-user-circle"></i>`)+`<span>${esc(user.displayName||user.email)}</span>${roleBadge}`;
     aBtn.style.display=isAdmin?'flex':'none';
+    if(rBtn) rBtn.style.display=isMainAdmin?'flex':'none';
     lBtn.style.display='none'; oBtn.style.display='flex';
     if(document.getElementById('pageLogin').classList.contains('active')) showPage('dict');
   } else {
     uEl.style.display='none'; aBtn.style.display='none'; lBtn.style.display='flex'; oBtn.style.display='none';
+    if(rBtn) rBtn.style.display='none';
     if(document.getElementById('pageAdmin').classList.contains('active')) showPage('dict');
   }
   // Refresh detail panel (feedback box depends on login state) and admin tables
@@ -3317,6 +3474,7 @@ async function reorderCatOptCards(fieldId, srcId, tgtId){
     await batch.commit();
   }catch(err){ console.error(err); showToast('⚠ Could not save new order.'); }
   showSaving(false);
+  regeneratePublicSnapshot();
   renderCategoryOptionsPage(fieldId);
 }
 
@@ -5351,7 +5509,7 @@ async function autoFillChipField(fieldKey, table, label){
   const missing=matched.filter(name=>!arr.some(x=>x.value===name));
   for(const name of missing){
     const newDoc=await addValue(col,name);
-    if(newDoc) arr.push(newDoc);
+    if(newDoc){ arr.push(newDoc); regeneratePublicSnapshot(); }
   }
   if(missing.length) buildModalFields(WORDS.find(x=>x.id===editingId)||{});
 
@@ -5951,6 +6109,7 @@ window.addBuiltinValue=async function(colName,key){
   if(arr.some(x=>x.value===val)){ showToast('That value already exists.'); return; }
   const newDoc=await addValue(colName,val); if(!newDoc) return;
   arr.push(newDoc);
+  regeneratePublicSnapshot();
   inp.value='';
   buildFilterPanel(); buildFilterTags();
   const wide=colName==='tags';
@@ -6023,6 +6182,7 @@ window.addNewCategoryBlock=async function(){
   document.getElementById('newFieldName').value='';
   document.getElementById('newFieldOptions').value='';
   if(document.getElementById('newFieldResearcher')) document.getElementById('newFieldResearcher').checked=false;
+  regeneratePublicSnapshot();
   buildFilterPanel(); renderOptionsPanel();
   showToast(`Category "${name}" created${opts.length?` with ${opts.length} option(s)`:''}`);
 };
@@ -6060,6 +6220,7 @@ window.addCustomValue=async function(fieldId){
   }catch(err){ console.error(err); showToast('⚠ Could not save.'); showSaving(false); return; }
   showSaving(false);
   inp.value='';
+  regeneratePublicSnapshot();
   buildFilterPanel();
   const opts=CUSTOM_OPTIONS.filter(o=>o.fieldId===fieldId);
   renderValueRows('cst_'+fieldId, opts, false, (id,v)=>renameCustomValue(fieldId,id,v), (id)=>deleteCustomValue(fieldId,id), 'customFieldOptions');
@@ -6112,6 +6273,7 @@ window.inlineAddBuiltin=async function(key){
   if(arr.some(x=>x.value===v)){ showToast('That value already exists.'); return; }
   const newDoc=await addValue(colName,v); if(!newDoc) return;
   arr.push(newDoc);
+  regeneratePublicSnapshot();
   buildFilterPanel(); buildFilterTags();
   if(key==='hand') buildHsGrid();
   buildModalFields(WORDS.find(x=>x.id===editingId)||{});
@@ -6128,6 +6290,7 @@ window.inlineAddCustom=async function(fieldId){
     CUSTOM_OPTIONS.push({id:ref.id,fieldId,value:v});
   }catch(err){ console.error(err); showToast('⚠ Could not save.'); showSaving(false); return; }
   showSaving(false);
+  regeneratePublicSnapshot();
   buildFilterPanel();
   buildModalFields(WORDS.find(x=>x.id===editingId)||{});
   showToast(`"${v}" added`);
@@ -6195,6 +6358,7 @@ async function reorderHandshapes(dragId, targetId){
     await batch.commit();
   }catch(err){ console.error(err); showToast('⚠ Could not save new order.'); }
   showSaving(false);
+  regeneratePublicSnapshot();
   buildHsGrid(); renderHsMgGrid(); buildFilterPanel();
 }
 
@@ -6230,6 +6394,7 @@ window.addHandshape=async function(){
   const maxOrder=HANDSHAPES.reduce((m,h)=>typeof h.order==='number'?Math.max(m,h.order):m,-1);
   const newDoc=await addValue('handshapes',v,{order:maxOrder+1}); if(!newDoc) return;
   HANDSHAPES.push(newDoc);
+  regeneratePublicSnapshot();
   inp.value='';
   buildHsGrid(); renderHsMgGrid(); buildFilterPanel();
   showToast(`Handshape "${v}" added`);
@@ -6539,7 +6704,7 @@ window.deleteContactMsg=async function(id){
 /* ══ INIT ══ */
 async function init(){
   await waitForAppCheckReady();
-  dataLoadedPromise = loadAll();
+  dataLoadedPromise = loadAllPublic();
   try{ await dataLoadedPromise; }
   catch(e){ console.error(e); showToast('⚠ Firebase connection error. Check your config and Firestore rules.'); }
   await loadAboutContent();
