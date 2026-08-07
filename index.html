@@ -6849,33 +6849,48 @@ window.vdExportCSV=function(){
   showToast('CSV exported');
 };
 
-// Some mobile browsers (iOS Safari especially) don't always fully repaint
-// after an orientation change, even once the CSS itself (dvh units, the
-// landscape media query) has the right values — occasionally leaving
-// stale blank space until something forces a reflow. A tiny scroll nudge
-// is a cheap, harmless way to force that repaint.
+// Some mobile browsers (iOS Safari/Chrome especially, since iOS Chrome is
+// WebKit under the hood too) don't always fully repaint after an
+// orientation change, even once the CSS itself (dvh units, the landscape
+// media query) has the right values — occasionally leaving stale blank
+// space, AND separately carry the user's pinch-zoom SCALE across the
+// rotation instead of resetting it, so right after rotating the page can
+// look "zoomed in" relative to the new screen width.
 //
-// Separately: those same browsers also carry the user's pinch-zoom SCALE
-// across the rotation instead of resetting it, even though the layout
-// itself is now correct for the new orientation — so right after rotating,
-// the page can look "zoomed in" relative to the new screen width until the
-// visitor manually pinches back out. resetViewportZoomAfterRotation()
-// briefly forces the viewport's max-scale down to 1, which makes the
-// browser drop whatever zoom level it was carrying over, then restores the
-// original (unrestricted) viewport a moment later — so pinch-to-zoom still
-// works normally afterward, this only resets the leftover scale from
-// before the rotation.
-function resetViewportZoomAfterRotation(){
-  const vp = document.querySelector('meta[name="viewport"]');
-  if(!vp) return;
-  const original = vp.getAttribute('content');
-  vp.setAttribute('content', 'width=device-width, initial-scale=1.0, maximum-scale=1.0');
-  setTimeout(()=>{ vp.setAttribute('content', original); }, 120);
+// Fix: briefly force the viewport's max-scale down to 1 (makes the browser
+// drop whatever zoom it was carrying over), force a repaint, then restore
+// the ORIGINAL unrestricted viewport and force a SECOND repaint. Both
+// repaints matter — skipping the second one leaves hit-testing (tap
+// targets like the nav menu) computed against the temporarily-locked
+// zoom state, which is what caused taps on Topics/Dictionary/About to stop
+// registering after rotating back.
+//
+// The original viewport content is captured ONCE at load, not re-read from
+// the DOM on each rotation — reading it live meant that rotating quickly
+// (before the previous cycle's restore had run) could capture an
+// already-locked value as "original" and get stuck restoring to that
+// instead of the real thing. A rotationToken additionally makes a rapid
+// second rotation fully supersede an in-flight first one (rather than the
+// two interleaving) — only the latest rotation's lock→repaint→restore→
+// repaint sequence is allowed to finish.
+const ORIGINAL_VIEWPORT_CONTENT = document.querySelector('meta[name="viewport"]')?.getAttribute('content') || 'width=device-width, initial-scale=1.0';
+let rotationToken = 0;
+function forceRepaint(){
+  window.scrollTo(0,0);
+  document.body.style.display='none'; document.body.offsetHeight; document.body.style.display='';
 }
 window.addEventListener('orientationchange',()=>{
+  const myToken = ++rotationToken;
   setTimeout(()=>{
-    resetViewportZoomAfterRotation();
-    window.scrollTo(0,0); document.body.style.display='none'; document.body.offsetHeight; document.body.style.display='';
+    if(myToken!==rotationToken) return; // a newer rotation already superseded this one
+    const vp = document.querySelector('meta[name="viewport"]');
+    if(vp) vp.setAttribute('content', 'width=device-width, initial-scale=1.0, maximum-scale=1.0');
+    forceRepaint();
+    setTimeout(()=>{
+      if(myToken!==rotationToken) return;
+      if(vp) vp.setAttribute('content', ORIGINAL_VIEWPORT_CONTENT);
+      forceRepaint();
+    }, 120);
   },50);
 });
 
