@@ -6880,19 +6880,26 @@ function forceRepaint(){
   document.body.style.display='none'; document.body.offsetHeight; document.body.style.display='';
 }
 window.addEventListener('orientationchange',()=>{
-  // Close the mobile drawer menu FIRST, immediately (not inside the
-  // debounced setTimeout below) — rotating crosses the 768px mobile/desktop
-  // breakpoint on many phones, and the drawer's "open" CSS class is only
-  // meaningful under the mobile breakpoint's media query. Leaving it open
-  // across that switch stranded both the drawer and its full-screen
-  // backdrop in a stuck state that intercepted taps on the nav items
-  // (Topics/Dictionary/About us) until several more rotations happened to
-  // reset it. Always closing on rotation sidesteps that combination
-  // entirely, regardless of which way the breakpoint just crossed.
-  if(typeof closeMobileMenu==='function') closeMobileMenu();
   const myToken = ++rotationToken;
   setTimeout(()=>{
     if(myToken!==rotationToken) return; // a newer rotation already superseded this one
+    const nav=document.getElementById('headerNav');
+    const menuOpen = !!nav && nav.classList.contains('mobile-open');
+    if(menuOpen){
+      // A student mid-interaction with the open drawer shouldn't have it
+      // snapped shut or visually disturbed out from under them just
+      // because they rotated the phone — that reads as the phone
+      // glitching, not as a fix. The aggressive part of this handler
+      // (locking/restoring the viewport's zoom + toggling body display to
+      // force a repaint) is what was corrupting the drawer's
+      // position:fixed layout when it ran while the drawer was open — so
+      // skip that entirely here. A plain scroll-reset is harmless and
+      // enough to avoid stale blank space without touching the drawer.
+      // The full zoom/repaint fix-up simply runs next time they rotate
+      // with the menu closed (including right after they close it).
+      window.scrollTo(0,0);
+      return;
+    }
     const vp = document.querySelector('meta[name="viewport"]');
     if(vp) vp.setAttribute('content', 'width=device-width, initial-scale=1.0, maximum-scale=1.0');
     forceRepaint();
