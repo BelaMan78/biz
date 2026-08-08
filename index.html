@@ -6880,6 +6880,16 @@ function forceRepaint(){
   document.body.style.display='none'; document.body.offsetHeight; document.body.style.display='';
 }
 window.addEventListener('orientationchange',()=>{
+  // Close the mobile drawer menu FIRST, immediately (not inside the
+  // debounced setTimeout below) — rotating crosses the 768px mobile/desktop
+  // breakpoint on many phones, and the drawer's "open" CSS class is only
+  // meaningful under the mobile breakpoint's media query. Leaving it open
+  // across that switch stranded both the drawer and its full-screen
+  // backdrop in a stuck state that intercepted taps on the nav items
+  // (Topics/Dictionary/About us) until several more rotations happened to
+  // reset it. Always closing on rotation sidesteps that combination
+  // entirely, regardless of which way the breakpoint just crossed.
+  if(typeof closeMobileMenu==='function') closeMobileMenu();
   const myToken = ++rotationToken;
   setTimeout(()=>{
     if(myToken!==rotationToken) return; // a newer rotation already superseded this one
