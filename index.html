@@ -567,7 +567,7 @@ body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--
   .right{padding:14px;}
   .detail-card{padding:18px 16px;max-width:none;}
   .entry-en{font-size:19px;}
-  /* Keep the same "How to Sign / Concept / Example" tab labels as desktop —
+  /* Keep the same "How to Sign / Explanation / Example" tab labels as desktop —
      just let them wrap onto two rows and shrink padding/gap a bit so three
      full-text tabs still fit on a narrow screen without truncating anything. */
   .vid-tabs{flex-wrap:wrap;}
@@ -1127,7 +1127,7 @@ body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--
         <button type="button" class="inline-add-btn vid-opt-add" onclick="addVidOption('fVidHowList')"><i class="ti ti-plus"></i> Add option</button>
       </div>
       <div class="form-field" style="margin-bottom:12px;">
-        <label style="color:var(--vconcept);">● Concept</label>
+        <label style="color:var(--vconcept);">● Explanation</label>
         <div class="vid-opt-list" id="fVidConceptList"></div>
         <button type="button" class="inline-add-btn vid-opt-add" onclick="addVidOption('fVidConceptList')"><i class="ti ti-plus"></i> Add option</button>
       </div>
@@ -1386,7 +1386,7 @@ function colorFor(str){ let h=0; for(let i=0;i<str.length;i++) h=str.charCodeAt(
 const DIFF_C={"Beginner":["#E1F5EE","#0F6E56"],"Intermediate":["#FAEEDA","#854F0B"],"Advanced":["#FAECE7","#993C1D"]};
 const VID_META={
   how:{icon:'ti-hand-finger',label:'How to Sign',color:'var(--vhow)',light:'var(--vhow-light)'},
-  concept:{icon:'ti-bulb',label:'Concept',color:'var(--vconcept)',light:'var(--vconcept-light)'},
+  concept:{icon:'ti-bulb',label:'Explanation',color:'var(--vconcept)',light:'var(--vconcept-light)'},
   example:{icon:'ti-message',label:'Example',color:'var(--vexample)',light:'var(--vexample-light)'},
 };
 // vid_how/vid_concept/vid_example now hold an ARRAY of {id,label} objects
@@ -1680,7 +1680,15 @@ let PENDING_REVIEWS=[]; // cached; kept live via a realtime listener while Main 
 let pendingReviewsUnsub=null; // unsubscribe fn for that listener (see subscribePendingReviews)
 let pendingReviewsLoaded=false; // true once the listener's first snapshot has actually arrived
 
+// Firestore throws on `undefined` values (common in sign objects), which made
+// the review doc silently fail to save. JSON round-trip strips them.
+function cleanForFirestore(obj){
+  if(obj==null) return obj;
+  try{ return JSON.parse(JSON.stringify(obj)); }catch(e){ return obj; }
+}
 async function createPendingReview(colName, docId, docLabel, action, snapshotBefore, snapshotAfter){
+  snapshotBefore = cleanForFirestore(snapshotBefore);
+  snapshotAfter = cleanForFirestore(snapshotAfter);
   const ref = await addDoc(collection(db,'pendingReviews'),{
     collection: colName,
     docId: String(docId),
@@ -1727,8 +1735,8 @@ async function submitDeleteWithReview(colName, docId, docLabel, fullDocData){
 // generally does NOT need to be called after every review action anymore.
 async function loadPendingReviews(){
   try{
-    const snap = await getDocs(query(collection(db,'pendingReviews'), orderBy('ts','desc')));
-    PENDING_REVIEWS = snap.docs.map(d=>({id:d.id,...d.data()})).filter(r=>r.status==='pending');
+    const snap = await getDocs(collection(db,'pendingReviews'));
+    PENDING_REVIEWS = snap.docs.map(d=>({id:d.id,...d.data()})).filter(r=>r.status==='pending').sort((a,b)=>(b.ts||0)-(a.ts||0));
     pendingReviewsLoaded = true;
   }catch(err){ console.error('loadPendingReviews failed:',err); PENDING_REVIEWS=[]; }
   return PENDING_REVIEWS;
@@ -1743,9 +1751,11 @@ async function loadPendingReviews(){
 // multiplying cost a listener on a public, visitor-facing collection would have.
 function subscribePendingReviews(){
   if(pendingReviewsUnsub) return; // already subscribed, avoid double-listening
-  const q = query(collection(db,'pendingReviews'), where('status','==','pending'), orderBy('ts','desc'));
+  // No orderBy here: where(status)+orderBy(ts) needs a composite index, and
+  // without it the listener errors out and the tab stays empty. Sort locally.
+  const q = query(collection(db,'pendingReviews'), where('status','==','pending'));
   pendingReviewsUnsub = onSnapshot(q, snap=>{
-    PENDING_REVIEWS = snap.docs.map(d=>({id:d.id,...d.data()}));
+    PENDING_REVIEWS = snap.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(b.ts||0)-(a.ts||0));
     pendingReviewsLoaded = true;
     renderReviewBadgeFromCache();
     // Only re-render the review list itself if it's actually the visible tab —
@@ -1754,7 +1764,12 @@ function subscribePendingReviews(){
        document.getElementById('apReview')?.classList.contains('active')){
       renderPendingReviewsAdmin();
     }
-  }, err=>{ console.error('pendingReviews listener failed:',err); });
+  }, err=>{
+    console.error('pendingReviews listener failed:',err);
+    pendingReviewsUnsub=null;
+    // Fall back to a one-shot read so the tab still works
+    loadPendingReviews().then(()=>{ renderReviewBadgeFromCache(); renderPendingReviewsAdmin(); });
+  });
 }
 // Tears the listener down (on logout, or losing Main Admin status) so it
 // doesn't keep billing reads against a session nobody's using anymore.
@@ -2163,8 +2178,9 @@ async function deleteWordDoc(id){
     await submitDeleteWithReview('signs', id, fullData.en, fullData);
     patchGlobalAfterDelete('signs', id);
     regeneratePublicSnapshot();
+    return true;
   }
-  catch(err){ console.error(err); showToast('⚠ Could not delete.'); }
+  catch(err){ console.error(err); showToast('⚠ Could not delete: '+(err?.message||err)); return false; }
   finally{ showSaving(false); }
 }
 
@@ -2218,7 +2234,7 @@ const ABOUT_SUB_DEFS=[
 <h2>Who is it for?</h2>
 <p>SignBiz is designed for <strong>HS (high school) students</strong> taking business or entrepreneurship courses, their teachers, and anyone who wants to communicate more clearly in professional Deaf and hearing-mixed environments.</p>
 <h2>How to use SignBiz</h2>
-<p>Browse by topic, search for a specific word, or explore signs by handshape. Each entry includes a <em>How to Sign</em> video, a <em>Concept</em> explanation, and an <em>Example</em> sentence in context.</p>
+<p>Browse by topic, search for a specific word, or explore signs by handshape. Each entry includes a <em>How to Sign</em> video, an <em>Explanation</em> video, and an <em>Example</em> sentence in context.</p>
 <p>If you spot an error or a missing sign, please use the <strong>Feedback</strong> option on any entry, or reach out through the <strong>Contact</strong> page.</p>`},
   {key:'conditions', fsKey:'aboutConditions', label:'Conditions of use',
    defaultTitle:'Conditions of Use',
@@ -3187,7 +3203,7 @@ function buildFilterPanel(){
   const hands=[...new Set(visibleWords().flatMap(w=>Array.isArray(w.hand)?w.hand:(w.hand?[w.hand]:[])))].sort();
   wrap.appendChild(makeSelect('fHand','Handshape',hands));
   const vd=document.createElement('div'); vd.className='adv-field';
-  vd.innerHTML=`<label>Videos</label><select id="fVid" onchange="doFilter()"><option value="">All</option><option value="how">Has How-to</option><option value="concept">Has Concept</option><option value="example">Has Example</option></select>`;
+  vd.innerHTML=`<label>Videos</label><select id="fVid" onchange="doFilter()"><option value="">All</option><option value="how">Has How-to</option><option value="concept">Has Explanation</option><option value="example">Has Example</option></select>`;
   wrap.appendChild(vd);
 }
 
@@ -5897,7 +5913,9 @@ window.confirmDeleteRouter=function(){
   else confirmDelete();
 };
 window.confirmDelete=async function(){
-  await deleteWordDoc(deletingId); WORDS=WORDS.filter(x=>x.id!==deletingId);
+  const ok = await deleteWordDoc(deletingId);
+  if(!ok){ closeDeleteModal(); return; }
+  WORDS=WORDS.filter(x=>x.id!==deletingId);
   closeDeleteModal();
   showToast(isMainAdmin?'Sign deleted':'Sign removed — sent to Main Admin for review');
   buildFilterPanel(); buildHsGrid(); doFilter(); renderAdminTable();
@@ -5923,7 +5941,10 @@ window.switchAdminTab=async function(tab){
   if(tab==='options')    renderOptionsPanel();
   if(tab==='handshapes') renderHsMgGrid();
   if(tab==='feedback')  { renderFeedbackAdmin().then(markFeedbackSeen); }
-  if(tab==='review')     renderPendingReviewsAdmin();
+  if(tab==='review'){
+    if(isMainAdmin && !pendingReviewsUnsub){ await loadPendingReviews(); renderReviewBadgeFromCache(); }
+    renderPendingReviewsAdmin();
+  }
   if(tab==='contacts')  { renderContactsAdmin().then(markContactsSeen); }
 };
 
