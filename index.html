@@ -1973,27 +1973,34 @@ function diffSummary(before, after){
 // being approved. The iframe is only created once the admin clicks the
 // thumbnail (not on render), so loading the review list never silently
 // fires off three YouTube embeds per pending item.
-function videoPreviewRow(after, reviewId){
+function videoPreviewRow(data, reviewId, caption){
   const types=['how','concept','example'];
   const cells=types.map(t=>{
     const m=VID_META[t];
-    const ytId=safeYtId(after?.['vid_'+t]);
-    const cellId=`rvVid_${esc(reviewId)}_${t}`;
-    if(!ytId){
+    const opts=vidArr(data,t); // handles array-of-{id,label}, plain strings, legacy shapes
+    if(!opts.length){
       return `<div class="rv-vid-cell" style="border-color:${m.light};">
         <div class="rv-vid-label" style="color:${m.color};"><i class="ti ${m.icon}"></i> ${m.label}</div>
         <div class="rv-vid-empty">No video</div>
       </div>`;
     }
+    const thumbs=opts.map((o,i)=>{
+      const ytId=safeYtId(o.id);
+      if(!ytId) return '';
+      const cellId=`rvVid_${safeDocId(reviewId)}_${t}_${i}`;
+      return `<div style="margin-bottom:6px;">
+        ${o.label?`<div style="font-size:10px;color:var(--text3);margin-bottom:3px;">${esc(o.label)}</div>`:''}
+        <div class="rv-vid-thumb" id="${cellId}" onclick="loadReviewVideo('${cellId}','${ytId}')">
+          <img src="https://i.ytimg.com/vi/${ytId}/hqdefault.jpg" loading="lazy" alt=""/>
+          <div class="rv-vid-play"><i class="ti ti-player-play-filled"></i></div>
+        </div></div>`;
+    }).join('');
     return `<div class="rv-vid-cell" style="border-color:${m.light};">
       <div class="rv-vid-label" style="color:${m.color};"><i class="ti ${m.icon}"></i> ${m.label}</div>
-      <div class="rv-vid-thumb" id="${cellId}" onclick="loadReviewVideo('${cellId}','${ytId}')">
-        <img src="https://i.ytimg.com/vi/${ytId}/hqdefault.jpg" loading="lazy" alt=""/>
-        <div class="rv-vid-play"><i class="ti ti-player-play-filled"></i></div>
-      </div>
+      ${thumbs}
     </div>`;
   }).join('');
-  return `<div class="rv-vid-row">${cells}</div>`;
+  return `${caption?`<div style="font-size:11px;color:var(--text3);margin-top:10px;">${caption}</div>`:''}<div class="rv-vid-row">${cells}</div>`;
 }
 window.loadReviewVideo=function(cellId, ytId){
   const el=document.getElementById(cellId); if(!el) return;
@@ -2003,6 +2010,16 @@ window.loadReviewVideo=function(cellId, ytId){
 // Pure render from PENDING_REVIEWS — no fetch. Kept live by the
 // subscribePendingReviews() listener, so switching to this tab (or the
 // listener pushing an update) both just call this directly now.
+function deleteDetails(d){
+  if(!d) return '';
+  const skip=new Set(['id','_pendingReviewId','_hidden','vid_how','vid_concept','vid_example']);
+  const rows=Object.keys(d).filter(k=>!skip.has(k) && d[k]!==''&&d[k]!=null&&!(Array.isArray(d[k])&&!d[k].length))
+    .slice(0,12).map(k=>{
+      const v=typeof d[k]==='object'?JSON.stringify(d[k]):d[k];
+      return `<div class="diff-row"><span class="diff-field">${esc(k)}</span><span class="diff-before">${esc(String(v).slice(0,200))}</span></div>`;
+    }).join('');
+  return rows?`<div class="diff-list" style="margin-top:6px;">${rows}</div>`:'';
+}
 window.renderPendingReviewsAdmin=function(){
   const el=document.getElementById('reviewAdminList');
   renderReviewBadgeFromCache();
@@ -2015,12 +2032,17 @@ window.renderPendingReviewsAdmin=function(){
       ? `<span class="fb-badge" style="background:var(--danger-light);color:var(--danger);">Delete</span>`
       : `<span class="fb-badge" style="background:var(--vexample-light);color:var(--vexample);">Edit</span>`;
     const body = r.action==='delete'
-      ? `<p style="font-size:12px;color:var(--text2);margin-top:6px;">Will be permanently removed from <strong>${esc(r.collection)}</strong> if approved. Currently hidden from guests and staff.</p>`
+      ? `<p style="font-size:12px;color:var(--text2);margin-top:6px;">Will be permanently removed from <strong>${esc(r.collection)}</strong> if approved. Currently hidden from guests and staff.</p>${deleteDetails(r.snapshotBefore)}`
       : `<div class="diff-list">${diffSummary(r.snapshotBefore, r.snapshotAfter)}</div>`;
     // Video thumbnails only make sense for sign edits (that's the only
     // collection with vid_how/vid_concept/vid_example fields).
-    const videoRow = (r.action==='edit' && r.collection==='signs')
-      ? videoPreviewRow(r.snapshotAfter, r.id) : '';
+    // Edit: preview the proposed (after) videos. Delete: preview the videos of
+    // the sign being deleted (snapshotBefore) so Main Admin can see what it is.
+    const videoRow = (r.collection==='signs')
+      ? (r.action==='edit'
+          ? videoPreviewRow(r.snapshotAfter, r.id, 'Proposed videos')
+          : videoPreviewRow(r.snapshotBefore, r.id, 'Videos of the sign to be deleted'))
+      : '';
     return `<div class="fb-card">
       <div class="fb-card-header">
         <span style="font-size:12px;font-weight:600;">${esc(r.docLabel)}</span>
