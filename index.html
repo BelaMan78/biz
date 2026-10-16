@@ -1328,6 +1328,11 @@ function safeYtId(id){ return String(id||'').replace(/[^A-Za-z0-9_-]/g,''); }
 // arbitrary JS in an admin's session. Stripping to the legit charset closes
 // this off entirely instead of just re-encoding it.
 function safeDocId(id){ return String(id||'').replace(/[^A-Za-z0-9_-]/g,''); }
+// Safe way to pass a data value into an inline on*="..." JS call. The value is
+// percent-encoded (quotes included) and decoded at runtime, so it can never
+// break out of the JS string — unlike esc(), which the browser undoes before
+// the attribute is parsed as JS. Usage: onclick="fn(${jsStr(value)})"
+function jsStr(v){ return "decodeURIComponent('"+encodeURIComponent(String(v??'')).replace(/'/g,'%27')+"')"; }
 
 // The About Us pages (Mission/Conditions/Privacy/custom pages) use a
 // contenteditable rich-text editor and are saved/rendered as raw HTML
@@ -1990,7 +1995,7 @@ function videoPreviewRow(data, reviewId, caption){
       const cellId=`rvVid_${safeDocId(reviewId)}_${t}_${i}`;
       return `<div style="margin-bottom:6px;">
         ${o.label?`<div style="font-size:10px;color:var(--text3);margin-bottom:3px;">${esc(o.label)}</div>`:''}
-        <div class="rv-vid-thumb" id="${cellId}" onclick="loadReviewVideo('${cellId}','${ytId}')">
+        <div class="rv-vid-thumb" id="${cellId}" onclick="loadReviewVideo(${jsStr(cellId)},${jsStr(ytId)})">
           <img src="https://i.ytimg.com/vi/${ytId}/hqdefault.jpg" loading="lazy" alt=""/>
           <div class="rv-vid-play"><i class="ti ti-player-play-filled"></i></div>
         </div></div>`;
@@ -2559,8 +2564,8 @@ function renderAboutSubPanel(sub){
       <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:16px;">
         <h2 id="asTitleView_${sub}" style="font-size:20px;font-weight:500;color:var(--text);">${esc(content.title)}</h2>
         <div style="display:flex;gap:6px;flex-shrink:0;">
-          <button class="row-btn" id="asEditBtn_${sub}" style="display:${isAdmin&&!pendingDelete?'flex':'none'};" onclick="enterAboutSubEdit('${sub}')"><i class="ti ti-edit"></i> Edit</button>
-          ${isCustomPage?`<button class="row-btn del" id="asDeleteBtn_${sub}" style="display:${isAdmin&&!pendingDelete?'flex':'none'};" onclick="openDeleteAboutPageModal('${sub}')"><i class="ti ti-trash"></i> Delete</button>`:''}
+          <button class="row-btn" id="asEditBtn_${sub}" style="display:${isAdmin&&!pendingDelete?'flex':'none'};" onclick="enterAboutSubEdit(${jsStr(sub)})"><i class="ti ti-edit"></i> Edit</button>
+          ${isCustomPage?`<button class="row-btn del" id="asDeleteBtn_${sub}" style="display:${isAdmin&&!pendingDelete?'flex':'none'};" onclick="openDeleteAboutPageModal(${jsStr(sub)})"><i class="ti ti-trash"></i> Delete</button>`:''}
         </div>
       </div>
       <div id="asBodyView_${sub}" class="aboutus-content-view">${sanitizeRichHtml(content.body)}</div>
@@ -2572,8 +2577,8 @@ function renderAboutSubPanel(sub){
           <div id="asRteBody_${sub}" class="rte-editor" contenteditable="true" spellcheck="true">${content.body}</div>
         </div>
         <div class="form-footer" style="margin-top:6px;">
-          <button class="btn" onclick="cancelAboutSubEdit('${sub}')">Cancel</button>
-          <button class="btn btn-primary" onclick="saveAboutSub('${sub}')">Save</button>
+          <button class="btn" onclick="cancelAboutSubEdit(${jsStr(sub)})">Cancel</button>
+          <button class="btn btn-primary" onclick="saveAboutSub(${jsStr(sub)})">Save</button>
         </div>
       </div>
     </div>
@@ -2591,33 +2596,33 @@ function buildRteToolbar(sub){
   //          layout (quote/hr) ... undo/redo pinned to the far right
   return `<div class="rte-toolbar" id="rteToolbar_${sub}">
     <div class="rte-toolbar-row rte-row1">
-      <button class="rte-btn" title="Bold" onclick="rteExec('${sub}','bold')"><strong>B</strong></button>
-      <button class="rte-btn" title="Italic" onclick="rteExec('${sub}','italic')"><em>I</em></button>
-      <button class="rte-btn" title="Underline" onclick="rteExec('${sub}','underline')"><u>U</u></button>
-      <button class="rte-btn" title="Strikethrough" onclick="rteExec('${sub}','strikeThrough')"><s>S</s></button>
-      <button class="rte-btn rte-color-btn" title="Text colour"><i class="ti ti-letter-a"></i><input type="color" id="rteColor_${sub}" value="#1a1a18" oninput="rteExec('${sub}','foreColor',this.value)"/></button>
-      <button class="rte-btn rte-color-btn" title="Highlight colour"><i class="ti ti-highlight"></i><input type="color" id="rteHighlight_${sub}" value="#fff3a0" oninput="rteExec('${sub}','hiliteColor',this.value)"/></button>
-      <button class="rte-btn" title="Clear formatting" onclick="rteExec('${sub}','removeFormat')"><i class="ti ti-clear-formatting"></i></button>
+      <button class="rte-btn" title="Bold" onclick="rteExec(${jsStr(sub)},'bold')"><strong>B</strong></button>
+      <button class="rte-btn" title="Italic" onclick="rteExec(${jsStr(sub)},'italic')"><em>I</em></button>
+      <button class="rte-btn" title="Underline" onclick="rteExec(${jsStr(sub)},'underline')"><u>U</u></button>
+      <button class="rte-btn" title="Strikethrough" onclick="rteExec(${jsStr(sub)},'strikeThrough')"><s>S</s></button>
+      <button class="rte-btn rte-color-btn" title="Text colour"><i class="ti ti-letter-a"></i><input type="color" id="rteColor_${sub}" value="#1a1a18" oninput="rteExec(${jsStr(sub)},'foreColor',this.value)"/></button>
+      <button class="rte-btn rte-color-btn" title="Highlight colour"><i class="ti ti-highlight"></i><input type="color" id="rteHighlight_${sub}" value="#fff3a0" oninput="rteExec(${jsStr(sub)},'hiliteColor',this.value)"/></button>
+      <button class="rte-btn" title="Clear formatting" onclick="rteExec(${jsStr(sub)},'removeFormat')"><i class="ti ti-clear-formatting"></i></button>
       <div class="rte-sep"></div>
-      <button class="rte-btn" title="Numbered list" onclick="rteExec('${sub}','insertOrderedList')"><i class="ti ti-list-numbers"></i></button>
-      <button class="rte-btn" title="Bullet list" onclick="rteExec('${sub}','insertUnorderedList')"><i class="ti ti-list"></i></button>
+      <button class="rte-btn" title="Numbered list" onclick="rteExec(${jsStr(sub)},'insertOrderedList')"><i class="ti ti-list-numbers"></i></button>
+      <button class="rte-btn" title="Bullet list" onclick="rteExec(${jsStr(sub)},'insertUnorderedList')"><i class="ti ti-list"></i></button>
     </div>
     <div class="rte-toolbar-row rte-row2">
-      <select class="rte-select" id="rteHeading_${sub}" onchange="rteExec('${sub}','formatBlock','<'+this.value+'>')">
+      <select class="rte-select" id="rteHeading_${sub}" onchange="rteExec(${jsStr(sub)},'formatBlock','<'+this.value+'>')">
         <option value="p">Paragraph</option>
         <option value="h1">Heading 1</option>
         <option value="h2">Heading 2</option>
         <option value="h3">Heading 3</option>
       </select>
       <div class="rte-sep"></div>
-      <button class="rte-btn" title="Insert link" onclick="rteInsertLink('${sub}')"><i class="ti ti-link"></i></button>
-      <button class="rte-btn" title="Insert image" onclick="openRteImageModal('${sub}')"><i class="ti ti-photo"></i></button>
+      <button class="rte-btn" title="Insert link" onclick="rteInsertLink(${jsStr(sub)})"><i class="ti ti-link"></i></button>
+      <button class="rte-btn" title="Insert image" onclick="openRteImageModal(${jsStr(sub)})"><i class="ti ti-photo"></i></button>
       <div class="rte-sep"></div>
-      <button class="rte-btn" title="Blockquote" onclick="rteBlockquote('${sub}')"><i class="ti ti-quote"></i></button>
-      <button class="rte-btn" title="Horizontal rule" onclick="rteExec('${sub}','insertHorizontalRule')"><i class="ti ti-minus"></i></button>
+      <button class="rte-btn" title="Blockquote" onclick="rteBlockquote(${jsStr(sub)})"><i class="ti ti-quote"></i></button>
+      <button class="rte-btn" title="Horizontal rule" onclick="rteExec(${jsStr(sub)},'insertHorizontalRule')"><i class="ti ti-minus"></i></button>
       <div class="rte-spacer"></div>
-      <button class="rte-btn" title="Undo" onclick="rteExec('${sub}','undo')"><i class="ti ti-arrow-back-up"></i></button>
-      <button class="rte-btn" title="Redo" onclick="rteExec('${sub}','redo')"><i class="ti ti-arrow-forward-up"></i></button>
+      <button class="rte-btn" title="Undo" onclick="rteExec(${jsStr(sub)},'undo')"><i class="ti ti-arrow-back-up"></i></button>
+      <button class="rte-btn" title="Redo" onclick="rteExec(${jsStr(sub)},'redo')"><i class="ti ti-arrow-forward-up"></i></button>
     </div>
   </div>`;
 }
@@ -3308,11 +3313,11 @@ window.renderTopicsLanding=function(){
         <div class="topic-card-count">${count} sign${count===1?'':'s'}</div>
         ${desc}${pending}
         <div class="topic-card-mg-actions">
-          <button class="topic-card-mg-btn danger" onclick="event.stopPropagation();removeTopicsCard('${item.colName}','${item.id}')"><i class="ti ti-eye-off"></i> Remove card</button>
+          <button class="topic-card-mg-btn danger" onclick="event.stopPropagation();removeTopicsCard(${jsStr(item.colName)},${jsStr(item.id)})"><i class="ti ti-eye-off"></i> Remove card</button>
         </div>
       </div>`;
     }
-    return `<div class="topic-card${count===0?' topic-card-empty':''}" onclick="${item.kind==='topic'?`goToTopic('${esc(item.value)}')`:`goToCategoryOptions('${item.id}')`}">
+    return `<div class="topic-card${count===0?' topic-card-empty':''}" onclick="${item.kind==='topic'?`goToTopic(${jsStr(item.value)})`:`goToCategoryOptions(${jsStr(item.id)})`}">
       <div class="topic-card-icon" style="background:${cc[0]};color:${cc[1]}"><i class="ti ${iconFor(item.value)}"></i></div>
       <div class="topic-card-name">${esc(item.value)}</div>
       <div class="topic-card-count">${count} sign${count===1?'':'s'}</div>
@@ -3467,11 +3472,11 @@ window.renderCategoryOptionsPage=function(fieldId){
         <div class="topic-card-count">${opt.count} sign${opt.count===1?'':'s'}</div>
         ${desc}${pending}
         <div class="topic-card-mg-actions">
-          <button class="topic-card-mg-btn danger" onclick="event.stopPropagation();removeCatOptCard('${fieldId}','${opt.id}')"><i class="ti ti-eye-off"></i> Remove card</button>
+          <button class="topic-card-mg-btn danger" onclick="event.stopPropagation();removeCatOptCard(${jsStr(fieldId)},${jsStr(opt.id)})"><i class="ti ti-eye-off"></i> Remove card</button>
         </div>
       </div>`;
     }
-    return `<div class="topic-card" onclick="goToCategoryOption('${fieldId}','${esc(opt.value)}')">
+    return `<div class="topic-card" onclick="goToCategoryOption(${jsStr(fieldId)},${jsStr(opt.value)})">
       <div class="topic-card-icon" style="background:${cc[0]};color:${cc[1]}"><i class="ti ${iconFor(opt.value)}"></i></div>
       <div class="topic-card-name">${esc(opt.value)}</div>
       <div class="topic-card-count">${opt.count} sign${opt.count===1?'':'s'}</div>
@@ -3768,7 +3773,7 @@ window.renderHeaderNav=function(){
       el.dataset.navKey = item.type==='fixed' ? `fixed:${item.key}` : `custom:${item.fieldId}`;
       const pendingNote = item._pendingReviewId ? ' title="Pending removal review"' : '';
       el.innerHTML = `<span${pendingNote}>${esc(item.label)}${item._pendingReviewId?' <i class="ti ti-clock" style="font-size:11px;"></i>':''}</span>` +
-        (item.type==='custom' ? `<span class="nav-item-remove" onclick="event.stopPropagation();removeNavItem('${item.fieldId}')"><i class="ti ti-x" style="font-size:11px;"></i></span>` : '');
+        (item.type==='custom' ? `<span class="nav-item-remove" onclick="event.stopPropagation();removeNavItem(${jsStr(item.fieldId)})"><i class="ti ti-x" style="font-size:11px;"></i></span>` : '');
       el.addEventListener('dragstart', e=>{ navDragSrc=el.dataset.navKey; el.classList.add('nav-dragging'); e.dataTransfer.effectAllowed='move'; });
       el.addEventListener('dragend', ()=>{ el.classList.remove('nav-dragging'); nav.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('nav-drag-over')); });
       el.addEventListener('dragover', e=>{ e.preventDefault(); if(el.dataset.navKey!==navDragSrc) el.classList.add('nav-drag-over'); });
@@ -3870,7 +3875,7 @@ function renderAcDropdownInto(ddId,q){
   const dd=document.getElementById(ddId); if(!dd) return;
   const items=buildAcItems(q);
   if(!items.length||!q){ dd.classList.remove('show'); dd.innerHTML=''; return; }
-  dd.innerHTML=items.map((it,i)=>`<div class="search-ac-item" data-id="${it.id}" onmousedown="acSelect('${it.id}')" onmouseover="acHover(${i})">${highlightMatch(it.label,q)}${it.sub?`<span style="font-size:11px;color:var(--text3);margin-left:6px;">${esc(it.sub)}</span>`:''}</div>`).join('');
+  dd.innerHTML=items.map((it,i)=>`<div class="search-ac-item" data-id="${esc(it.id)}" onmousedown="acSelect(${jsStr(it.id)})" onmouseover="acHover(${i})">${highlightMatch(it.label,q)}${it.sub?`<span style="font-size:11px;color:var(--text3);margin-left:6px;">${esc(it.sub)}</span>`:''}</div>`).join('');
   dd.classList.add('show');
 }
 function renderAcDropdown(q){ renderAcDropdownInto('searchAutocomplete',q); acFocusIndex=-1; }
@@ -3988,7 +3993,7 @@ function renderWordListPage(){
     const primary=showEs?w.es:w.en; // Spanish mode shows the translated word as primary — falls back to English if this sign has no translation yet
     const sub=cats[0]||'';
     const hands=Array.isArray(w.hand)?w.hand:(w.hand?[w.hand]:[]);
-    return `<div class="word-row${activeWord===w.id?' active':''}" onclick="selectWord('${w.id}')">
+    return `<div class="word-row${activeWord===w.id?' active':''}" onclick="selectWord(${jsStr(w.id)})">
       <span class="word-en">${esc(primary)}</span>
       <span class="word-sub">${esc(sub)}</span>
       <span class="pill" style="background:${cc[0]};color:${cc[1]}">${esc(hands[0]||'')}</span>
@@ -4118,7 +4123,7 @@ function renderDetail(w){
 
   // Researcher-only fields section (only visible to researchers and admins)
   const researcherDefs=CUSTOM_FIELDS.filter(cf=>cf.researcherOnly && (isAdmin||isResearcher));
-  const viewDataBtn=(isAdmin||isResearcher)?`<button class="view-data-btn" onclick="openVdModal('${esc(w.en)}',${typeof w.signDataTokenIndex==='number'?w.signDataTokenIndex:'undefined'})"><i class="ti ti-table"></i> View Data</button>`:'';
+  const viewDataBtn=(isAdmin||isResearcher)?`<button class="view-data-btn" onclick="openVdModal(${jsStr(w.en)},${typeof w.signDataTokenIndex==='number'?w.signDataTokenIndex:'undefined'})"><i class="ti ti-table"></i> View Data</button>`:'';
   const researcherHtml=(researcherDefs.length||isAdmin||isResearcher) ? `
     <div class="researcher-only-section">
       <div class="researcher-only-section-title"><i class="ti ti-microscope"></i> Researcher metadata</div>
@@ -4140,7 +4145,7 @@ function renderDetail(w){
   if(!visibleTypes.includes(activeVideoType)) activeVideoType='how';
   const tabs=visibleTypes.map(type=>{
     const m=VID_META[type]; const isActive=type===activeVideoType;
-    return `<div class="vid-tab${isActive?' active':''}" data-type="${type}" onclick="switchVideoTab('${w.id}','${type}')"><i class="ti ${m.icon}"></i><span>${m.label}</span></div>`;
+    return `<div class="vid-tab${isActive?' active':''}" data-type="${type}" onclick="switchVideoTab(${jsStr(w.id)},${jsStr(type)})"><i class="ti ${m.icon}"></i><span>${m.label}</span></div>`;
   }).join('');
 
   // Some words have more than one accepted way to sign the same concept.
@@ -4151,7 +4156,7 @@ function renderDetail(w){
   if(curVidIdx>=curVidList.length) curVidIdx=0;
   activeVideoIndices[activeVideoType]=curVidIdx;
   const vidOptionsHtml=curVidList.length>1
-    ? `<div class="vid-options">${curVidList.map((o,i)=>`<div class="vid-opt-btn${i===curVidIdx?' active':''}" onclick="switchVideoOption('${w.id}',${i})" title="${o.label?esc(o.label):''}">${esc(o.label||('Option '+(i+1)))}</div>`).join('')}</div>`
+    ? `<div class="vid-options">${curVidList.map((o,i)=>`<div class="vid-opt-btn${i===curVidIdx?' active':''}" onclick="switchVideoOption(${jsStr(w.id)},${i})" title="${o.label?esc(o.label):''}">${esc(o.label||('Option '+(i+1)))}</div>`).join('')}</div>`
     : '';
 
   const ytId=safeYtId(curVidList[curVidIdx] && curVidList[curVidIdx].id);
@@ -4166,7 +4171,7 @@ function renderDetail(w){
           <button class="gif-speed-btn active" onclick="setGifSpeed(1,this)">1x</button>
           <button class="gif-speed-btn" onclick="setGifSpeed(1.5,this)">1.5x</button>
         </div>
-        <button class="gif-ctrl-btn" onclick="openFsModal('${ytId}')" title="Fullscreen"><i class="ti ti-maximize"></i></button>
+        <button class="gif-ctrl-btn" onclick="openFsModal(${jsStr(ytId)})" title="Fullscreen"><i class="ti ti-maximize"></i></button>
       </div>`
     :`<div class="vid-ph"><i class="ti ti-video-off"></i><p>No video yet for <strong>${VID_META[activeVideoType].label}</strong></p></div>`;
 
@@ -4180,8 +4185,8 @@ function renderDetail(w){
           }
         </div>
         <div class="entry-nav-buttons">
-          ${prevId?`<button class="entry-nav-btn" onclick="selectWord('${prevId}')" title="Previous word"><i class="ti ti-chevron-left"></i><span class="entry-nav-label">Previous</span></button>`:''}
-          ${nextId?`<button class="entry-nav-btn" onclick="selectWord('${nextId}')" title="Next word"><span class="entry-nav-label">Next Word</span><i class="ti ti-chevron-right"></i></button>`:''}
+          ${prevId?`<button class="entry-nav-btn" onclick="selectWord(${jsStr(prevId)})" title="Previous word"><i class="ti ti-chevron-left"></i><span class="entry-nav-label">Previous</span></button>`:''}
+          ${nextId?`<button class="entry-nav-btn" onclick="selectWord(${jsStr(nextId)})" title="Next word"><span class="entry-nav-label">Next Word</span><i class="ti ti-chevron-right"></i></button>`:''}
         </div>
       </div>
       <div class="entry-tags">${pillsHtml}${handPills}${specialPills}</div>
@@ -4227,10 +4232,10 @@ function renderFeedbackSection(w){
     const adminActions = isAdmin ? `
       <div class="fb-comment-actions">
         ${f.isPublic
-          ? `<button class="fb-mini-btn" onclick="toggleFeedbackPublic('${w.id}','${safeDocId(f.id)}',false)"><i class="ti ti-eye-off"></i> Hide</button>`
-          : `<button class="fb-mini-btn" onclick="toggleFeedbackPublic('${w.id}','${safeDocId(f.id)}',true)"><i class="ti ti-eye"></i> Make public</button>`}
-        <button class="fb-mini-btn" onclick="openTeamReplyPrompt('${w.id}','${safeDocId(f.id)}')"><i class="ti ti-message-reply"></i> ${f.teamReply?'Edit reply':'Reply'}</button>
-        <button class="fb-mini-btn danger" onclick="deleteFeedback('${safeDocId(f.id)}','${w.id}')"><i class="ti ti-trash"></i> Delete</button>
+          ? `<button class="fb-mini-btn" onclick="toggleFeedbackPublic(${jsStr(w.id)},'${safeDocId(f.id)}',false)"><i class="ti ti-eye-off"></i> Hide</button>`
+          : `<button class="fb-mini-btn" onclick="toggleFeedbackPublic(${jsStr(w.id)},'${safeDocId(f.id)}',true)"><i class="ti ti-eye"></i> Make public</button>`}
+        <button class="fb-mini-btn" onclick="openTeamReplyPrompt(${jsStr(w.id)},'${safeDocId(f.id)}')"><i class="ti ti-message-reply"></i> ${f.teamReply?'Edit reply':'Reply'}</button>
+        <button class="fb-mini-btn danger" onclick="deleteFeedback('${safeDocId(f.id)}',${jsStr(w.id)})"><i class="ti ti-trash"></i> Delete</button>
       </div>` : '';
     return `<div class="fb-comment">
       <div class="fb-comment-header"><span class="fb-comment-name">${esc(name)}</span>${stars}${privacyBadge}<span class="fb-comment-date">${date}</span></div>
@@ -4246,26 +4251,26 @@ function renderFeedbackSection(w){
   const prefAnon = !!userPrefs?.anonymous;
   const commentBox = isLoggedIn
     ? `<div class="fb-name-row">
-         <input type="text" class="fb-name-input" id="fbNick_${w.id}" placeholder="Your display name" value="${prefAnon?'':esc(prefNick)}" ${prefAnon?'disabled':''} oninput="onNickInput('${w.id}')"/>
+         <input type="text" class="fb-name-input" id="fbNick_${w.id}" placeholder="Your display name" value="${prefAnon?'':esc(prefNick)}" ${prefAnon?'disabled':''} oninput="onNickInput(${jsStr(w.id)})"/>
          <label class="fb-anon-toggle">
-           <input type="checkbox" id="fbAnon_${w.id}" ${prefAnon?'checked':''} onchange="onAnonToggle('${w.id}')"/>
+           <input type="checkbox" id="fbAnon_${w.id}" ${prefAnon?'checked':''} onchange="onAnonToggle(${jsStr(w.id)})"/>
            <span>Post anonymously<span class="fb-anon-preview" id="fbAnonPreview_${w.id}">${prefAnon?` (shown as ${anonLabelFor(currentUser.uid)})`:''}</span></span>
          </label>
        </div>
        <div class="star-row" id="starRow_${w.id}">
-         ${[1,2,3,4,5].map(n=>`<span class="star" onclick="setFbRating(${n},'${w.id}')" onmouseover="hoverStars(${n},'${w.id}')" onmouseout="resetStarHover('${w.id}')">★</span>`).join('')}
+         ${[1,2,3,4,5].map(n=>`<span class="star" onclick="setFbRating(${n},${jsStr(w.id)})" onmouseover="hoverStars(${n},${jsStr(w.id)})" onmouseout="resetStarHover(${jsStr(w.id)})">★</span>`).join('')}
        </div>
-       <div class="fb-type-row">${['Bug','Suggestion','Other'].map(t=>`<span class="fb-type" onclick="setFbType('${t}','${w.id}')">${t}</span>`).join('')}</div>
+       <div class="fb-type-row">${['Bug','Suggestion','Other'].map(t=>`<span class="fb-type" onclick="setFbType(${jsStr(t)},${jsStr(w.id)})">${t}</span>`).join('')}</div>
        <textarea class="fb-textarea" id="fbText_${w.id}" placeholder="Your feedback (optional)..."></textarea>
        <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
-         <button class="fb-submit" onclick="submitFeedback('${w.id}')">Send feedback</button>
+         <button class="fb-submit" onclick="submitFeedback(${jsStr(w.id)})">Send feedback</button>
          <span class="fb-success" id="fbSuccess_${w.id}"><i class="ti ti-circle-check"></i> Thank you!</span>
        </div>
        <p class="fb-privacy-note"><i class="ti ti-lock" style="margin-right:3px;"></i>Your comment is private by default. Our team may choose to make helpful comments public for discussion. Only your chosen name and comment are ever shown — never your email.</p>`
     : (hasRatedBefore(w.id)
        ? `<div class="fb-guest-login">
             <p><i class="ti ti-circle-check" style="color:var(--success);margin-right:4px;"></i>You've already rated this sign on this device. Thanks!</p>
-            <button class="google-btn" style="margin-top:8px;" onclick="loginGoogleForComment('${w.id}')">
+            <button class="google-btn" style="margin-top:8px;" onclick="loginGoogleForComment(${jsStr(w.id)})">
               <svg viewBox="0 0 24 24" width="16" height="16"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
               Sign in with Google to leave a comment
             </button>
@@ -4273,9 +4278,9 @@ function renderFeedbackSection(w){
        : `<div class="fb-guest-login">
          <p>Rate this sign with stars right away, or sign in with Google to leave a written comment.</p>
          <div class="star-row" id="starRow_${w.id}" style="justify-content:center;">
-           ${[1,2,3,4,5].map(n=>`<span class="star" onclick="quickRate(${n},'${w.id}')" onmouseover="hoverStars(${n},'${w.id}')" onmouseout="resetStarHover('${w.id}')">★</span>`).join('')}
+           ${[1,2,3,4,5].map(n=>`<span class="star" onclick="quickRate(${n},${jsStr(w.id)})" onmouseover="hoverStars(${n},${jsStr(w.id)})" onmouseout="resetStarHover(${jsStr(w.id)})">★</span>`).join('')}
          </div>
-         <button class="google-btn" style="margin-top:8px;" onclick="loginGoogleForComment('${w.id}')">
+         <button class="google-btn" style="margin-top:8px;" onclick="loginGoogleForComment(${jsStr(w.id)})">
            <svg viewBox="0 0 24 24" width="16" height="16"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
            Sign in with Google to comment
          </button>
@@ -4558,8 +4563,8 @@ function renderAdminTable(){
       <td style="color:var(--text2)">${esc(w.diff||'')}</td>
       <td><div style="display:flex;gap:4px;">${dots}</div></td>
       <td><div class="row-actions">
-        <button class="row-btn" onclick="openEditModal('${w.id}')"><i class="ti ti-pencil"></i> Edit</button>
-        <button class="row-btn del" onclick="openDeleteModal('${w.id}')"><i class="ti ti-trash"></i> Delete</button>
+        <button class="row-btn" onclick="openEditModal(${jsStr(w.id)})"><i class="ti ti-pencil"></i> Edit</button>
+        <button class="row-btn del" onclick="openDeleteModal(${jsStr(w.id)})"><i class="ti ti-trash"></i> Delete</button>
       </div></td>
     </tr>`;
   }).join('') || `<tr><td colspan="7" style="text-align:center;color:var(--text3);padding:24px;">No signs match "${esc(q)}"</td></tr>`;
@@ -5642,7 +5647,7 @@ window.checkSignDataMatch=function(){
     row.style.cssText='display:flex;align-items:center;gap:8px;font-size:12px;background:var(--bg);border:1px solid var(--border2);border-radius:var(--r-sm);padding:8px 10px;cursor:pointer;';
     row.innerHTML=`
       <input type="radio" name="signDataTokenChoice" value="${i}" ${i===preselectIdx?'checked':''} style="width:auto;height:auto;margin:0;flex:0 0 auto;"
-        onchange="applySignDataToken('${word}', ${i})"/>
+        onchange="applySignDataToken(${jsStr(word)}, ${i})"/>
       <span style="display:flex;gap:5px;flex-wrap:wrap;flex:1 1 auto;">
         <span class="vd-tag vd-tag-HS_R">R: ${esc(hsR)}</span>
         <span class="vd-tag vd-tag-HS_L">L: ${esc(hsL)}</span>
@@ -5765,7 +5770,7 @@ window.updateVidPreview=function(inputEl){
   const id=safeYtId(inputEl.value.trim());
   if(!id){ previewEl.innerHTML=''; previewEl.classList.remove('show'); return; }
   previewEl.classList.add('show');
-  previewEl.innerHTML=`<div class="vid-opt-thumb" onclick="playVidPreview(this,'${id}')">
+  previewEl.innerHTML=`<div class="vid-opt-thumb" onclick="playVidPreview(this,${jsStr(id)})">
     <img src="https://img.youtube.com/vi/${id}/mqdefault.jpg" alt="" loading="lazy"/>
     <span class="vid-opt-play"><i class="ti ti-player-play-filled"></i></span>
   </div>`;
@@ -5847,7 +5852,7 @@ function buildModalFields(w){
       wrap.appendChild(fd);
       return;
     }
-    lbl.innerHTML+=`<button type="button" class="inline-add-btn" style="height:auto;padding:1px 8px;font-size:14px;" onclick="${isBuiltin?`inlineAddBuiltin('${def.key}')`:`inlineAddCustom('${def.key.replace('cf_','')}')`}">+</button>`;
+    lbl.innerHTML+=`<button type="button" class="inline-add-btn" style="height:auto;padding:1px 8px;font-size:14px;" onclick="${isBuiltin?`inlineAddBuiltin(${jsStr(def.key)})`:`inlineAddCustom(${jsStr(def.key.replace('cf_',''))})`}">+</button>`;
     fd.appendChild(lbl);
     const ms=document.createElement('div'); ms.className='ms-wrap'; ms.id='chips_'+def.key;
     fd.appendChild(ms);
@@ -6009,7 +6014,7 @@ function makeBuiltinCard(title,colName,type,key,subtitle,wide=false){
     <div class="options-card-title">${esc(title)} <span style="font-size:10px;color:var(--text3);font-weight:400;">${type==='singleselect'?'(single-select)':'(multi-select)'}</span></div>
     <div class="options-card-sub">${esc(subtitle)}</div>
     <div class="options-list" id="${listId}" ${wide?'style="flex-direction:row;flex-wrap:wrap;max-height:none;"':''}></div>
-    <div class="options-add-row"><input type="text" id="new_${key}" placeholder="New value..." onkeydown="if(event.key==='Enter')addBuiltinValue('${colName}','${key}')"/><button onclick="addBuiltinValue('${colName}','${key}')">Add</button></div>
+    <div class="options-add-row"><input type="text" id="new_${key}" placeholder="New value..." onkeydown="if(event.key==='Enter')addBuiltinValue(${jsStr(colName)},${jsStr(key)})"/><button onclick="addBuiltinValue(${jsStr(colName)},${jsStr(key)})">Add</button></div>
   `;
   return card;
 }
@@ -6019,17 +6024,17 @@ function makeCustomCard(cf){
   const listId='cst_'+cf.id;
   const typeLabel=cf.type==='paragraph'?'(paragraph text) · custom':cf.type==='singleselect'?'(single-select) · custom':'(multi-select) · custom';
   const rBadge=cf.researcherOnly?`<span class="researcher-badge"><i class="ti ti-microscope" style="font-size:10px;"></i> Researcher only</span>`:'';
-  const optionsSection=cf.type==='paragraph'?`<p style="font-size:12px;color:var(--text3);padding:4px 2px;font-style:italic;">Paragraph fields don't have preset options — admins enter text per sign.</p>`:`<div class="options-list" id="${listId}"></div><div class="options-add-row"><input type="text" id="newc_${cf.id}" placeholder="New value..." onkeydown="if(event.key==='Enter')addCustomValue('${cf.id}')"/><button onclick="addCustomValue('${cf.id}')">Add</button></div>`;
+  const optionsSection=cf.type==='paragraph'?`<p style="font-size:12px;color:var(--text3);padding:4px 2px;font-style:italic;">Paragraph fields don't have preset options — admins enter text per sign.</p>`:`<div class="options-list" id="${listId}"></div><div class="options-add-row"><input type="text" id="newc_${cf.id}" placeholder="New value..." onkeydown="if(event.key==='Enter')addCustomValue(${jsStr(cf.id)})"/><button onclick="addCustomValue(${jsStr(cf.id)})">Add</button></div>`;
   card.innerHTML=`
     <div class="options-card-title" style="display:flex;align-items:center;justify-content:space-between;">
       <span>${esc(cf.name)} <span style="font-size:10px;color:var(--text3);font-weight:400;">${typeLabel}</span>${rBadge}</span>
-      <button class="row-btn del" onclick="deleteCustomCategory('${cf.id}')" title="Delete this category"><i class="ti ti-trash"></i></button>
+      <button class="row-btn del" onclick="deleteCustomCategory(${jsStr(cf.id)})" title="Delete this category"><i class="ti ti-trash"></i></button>
     </div>
     <div class="options-card-sub">Custom category — appears in sign editor and filters.</div>
-    <label class="cf-landing-toggle"><input type="checkbox" id="cfResearcher_${cf.id}" ${cf.researcherOnly?'checked':''} onchange="toggleResearcherOnly('${cf.id}',this.checked)"/> Researcher only (hidden from students and guests)</label>
-    <label class="cf-landing-toggle"><input type="checkbox" id="cfLanding_${cf.id}" ${cf.showOnLanding?'checked':''} onchange="toggleCategoryOnLanding('customFields','${cf.id}',this.checked)"/> Show as a card on the Topics landing page</label>
-    <label class="cf-landing-toggle"><input type="checkbox" id="cfNav_${cf.id}" ${cf.showInNav?'checked':''} onchange="toggleCategoryInNav('${cf.id}',this.checked)"/> Show as a top navigation item</label>
-    <textarea class="topic-card-desc-input" id="cfDesc_${cf.id}" placeholder="Optional description shown on the card..." onblur="saveCategoryCardDesc('customFields','${cf.id}',this.value)">${esc(cf.description||'')}</textarea>
+    <label class="cf-landing-toggle"><input type="checkbox" id="cfResearcher_${cf.id}" ${cf.researcherOnly?'checked':''} onchange="toggleResearcherOnly(${jsStr(cf.id)},this.checked)"/> Researcher only (hidden from students and guests)</label>
+    <label class="cf-landing-toggle"><input type="checkbox" id="cfLanding_${cf.id}" ${cf.showOnLanding?'checked':''} onchange="toggleCategoryOnLanding('customFields',${jsStr(cf.id)},this.checked)"/> Show as a card on the Topics landing page</label>
+    <label class="cf-landing-toggle"><input type="checkbox" id="cfNav_${cf.id}" ${cf.showInNav?'checked':''} onchange="toggleCategoryInNav(${jsStr(cf.id)},this.checked)"/> Show as a top navigation item</label>
+    <textarea class="topic-card-desc-input" id="cfDesc_${cf.id}" placeholder="Optional description shown on the card..." onblur="saveCategoryCardDesc('customFields',${jsStr(cf.id)},this.value)">${esc(cf.description||'')}</textarea>
     ${optionsSection}
   `;
   return card;
@@ -6823,7 +6828,7 @@ window.openVdModal=function(wordEn, onlyTokenIndex){
   });
   const statEl=document.getElementById('vdStats');
   statEl.innerHTML=`
-    ${filtered ? `<div class="vd-stat" style="color:var(--accent);"><i class="ti ti-filter" style="font-size:13px;"></i> Showing only the recording you selected · <a href="#" onclick="openVdModal('${esc(wordEn)}');return false;" style="color:var(--accent);text-decoration:underline;">view all ${allTokens.length}</a></div>` : ''}
+    ${filtered ? `<div class="vd-stat" style="color:var(--accent);"><i class="ti ti-filter" style="font-size:13px;"></i> Showing only the recording you selected · <a href="#" onclick="openVdModal(${jsStr(wordEn)});return false;" style="color:var(--accent);text-decoration:underline;">view all ${allTokens.length}</a></div>` : ''}
     <div class="vd-stat"><i class="ti ti-repeat" style="font-size:13px;"></i> <strong>${tokens.length}</strong> token${tokens.length===1?'':'s'}</div>
     <div class="vd-stat"><i class="ti ti-table-row" style="font-size:13px;"></i> <strong>${totalRows}</strong> rows</div>
     ${Object.entries(tagCounts).map(([t,n])=>`<div class="vd-stat"><span class="vd-tag ${vdTagClass(t)}">${esc(t)}</span> <strong>${n}</strong></div>`).join('')}
