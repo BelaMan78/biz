@@ -818,6 +818,10 @@ body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--
       <div class="dict-context-bar" id="dictContextBar" style="display:none;">
         <button class="dict-context-back" id="dictContextBackBtn" onclick="dictContextBack()"><i class="ti ti-arrow-left"></i> <span id="dictContextBackLabel">Back</span></button>
         <h2 class="dict-context-title" id="dictContextTitle"></h2>
+        <div id="dictContextActions" style="margin-left:auto;display:none;gap:8px;flex-wrap:wrap;">
+          <a class="btn" id="dictContextPptLink" href="#" target="_blank" rel="noopener noreferrer" style="display:none;text-decoration:none;"><i class="ti ti-download"></i> Download PPT</a>
+          <button class="btn" id="dictContextPptEdit" style="display:none;" onclick="editOptionPptLink()"><i class="ti ti-link"></i> <span id="dictContextPptEditLabel">Set PPT link</span></button>
+        </div>
       </div>
       <main class="right" id="rightPanel">
         <div class="empty-state"><i class="ti ti-hand-finger"></i><p>Select a sign from the list<br>to view its videos and description.</p></div>
@@ -3545,7 +3549,7 @@ window.removeCatOptCard=async function(fieldId,optId){
 // landing page — Book is where this option card lived, two layers down.
 window.goToCategoryOption=function(fieldId,value){
   const cf=CUSTOM_FIELDS.find(f=>f.id===fieldId);
-  DICT_CONTEXT = { title:value, backLabel:'Back to '+(cf?cf.name:'category'), backAction:()=>showPage('catopt',fieldId) };
+  DICT_CONTEXT = { title:value, backLabel:'Back to '+(cf?cf.name:'category'), backAction:()=>showPage('catopt',fieldId), optionRef:{fieldId,value} };
   showPage('dict','keep-context');
   resetFilters();
   closeAdvPanel();
@@ -3569,7 +3573,51 @@ function renderDictContextBar(){
   bar.style.display='flex';
   document.getElementById('dictContextBackLabel').textContent=DICT_CONTEXT.backLabel;
   document.getElementById('dictContextTitle').textContent=DICT_CONTEXT.title;
+
+  // Optional public PPT download for category options (e.g. "Chapter 1").
+  // Stored as customFieldOptions/{id}.pptUrl — a plain https share link
+  // (Google Drive / OneDrive / etc.), so no file storage is needed.
+  const opt=currentContextOption();
+  const url=safePptUrl(opt && opt.pptUrl);
+  const actions=document.getElementById('dictContextActions');
+  const link=document.getElementById('dictContextPptLink');
+  const editBtn=document.getElementById('dictContextPptEdit');
+  if(link){ link.style.display=url?'inline-flex':'none'; if(url) link.href=url; }
+  if(editBtn){
+    editBtn.style.display=(opt && isAdmin)?'inline-flex':'none';
+    document.getElementById('dictContextPptEditLabel').textContent=url?'Edit PPT link':'Set PPT link';
+  }
+  if(actions) actions.style.display=(url||(opt&&isAdmin))?'flex':'none';
 }
+function currentContextOption(){
+  const ref=DICT_CONTEXT && DICT_CONTEXT.optionRef; if(!ref) return null;
+  return CUSTOM_OPTIONS.find(o=>o.fieldId===ref.fieldId && o.value===ref.value) || null;
+}
+// Only plain https links are ever used as a download href (blocks javascript:, data:, http:).
+function safePptUrl(u){
+  if(typeof u!=='string') return '';
+  try{ const x=new URL(u.trim()); return x.protocol==='https:' ? x.href : ''; }catch(e){ return ''; }
+}
+window.editOptionPptLink=async function(){
+  if(!isAdmin) return;
+  const opt=currentContextOption(); if(!opt) return;
+  const input=prompt('Paste the public share link for this chapter\'s PPT (https://…).\nLeave empty to remove the download button.', opt.pptUrl||'');
+  if(input===null) return;
+  const clean=input.trim();
+  const url=clean ? safePptUrl(clean) : '';
+  if(clean && !url){ showToast('⚠ Link must start with https://'); return; }
+  const before={...opt};
+  const after={...opt, pptUrl:url};
+  showSaving(true);
+  try{
+    await submitEditWithReview('customFieldOptions', opt.id, opt.value, before, after);
+    patchGlobalAfterSave('customFieldOptions', opt.id, after);
+    regeneratePublicSnapshot();
+    showToast(url?'PPT link saved':'PPT link removed');
+  }catch(err){ console.error(err); showToast('⚠ Could not save PPT link.'); }
+  finally{ showSaving(false); }
+  renderDictContextBar();
+};
 window.dictContextBack=function(){
   if(DICT_CONTEXT && DICT_CONTEXT.backAction) DICT_CONTEXT.backAction();
 };
