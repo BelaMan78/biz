@@ -4225,16 +4225,15 @@ function renderDetail(w){
       </div>`
     :`<div class="vid-ph"><i class="ti ti-video-off"></i><p>No video yet for <strong>${VID_META[activeVideoType].label}</strong></p></div>`;
 
-  // Each video tab has its own text block. "How to Sign" keeps its original
-  // label/field; Explanation and Example use their own fields and are hidden
-  // when empty (so they never show the how-to-sign text by mistake).
+  // Each video tab has its own text block. A block is only shown when it has
+  // text, so students never see an empty "How to sign:" / "Example:" label.
   const DESC_BY_TAB={
-    how:{label:'How to sign',text:w.desc,always:true},
+    how:{label:'How to sign',text:w.desc},
     concept:{label:'English Definition',text:w.descConcept},
     example:{label:'Example',text:w.descExample},
   };
   const tabDesc=DESC_BY_TAB[activeVideoType]||DESC_BY_TAB.how;
-  const descHtml=(tabDesc.always||tabDesc.text)
+  const descHtml=(tabDesc.text&&String(tabDesc.text).trim())
     ? `<p class="entry-desc"><strong>${tabDesc.label}:</strong> ${esc(tabDesc.text||'')}</p>` : '';
 
   document.getElementById('rightPanel').innerHTML=`
