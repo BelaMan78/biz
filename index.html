@@ -670,6 +670,21 @@ body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--
   .dict-context-title{font-size:20px;}
   .mobile-back-bar{padding:6px 16px;}
 }
+
+/* Lesson materials panel (MSSD Students chapters) */
+.lesson-panel{flex:0 0 100%;background:var(--bg);border:1px solid var(--border);border-radius:var(--r-md);padding:6px 16px;}
+.lesson-row{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:12px 0;border-bottom:1px solid var(--border);}
+.lesson-row:last-child{border-bottom:none;}
+.lesson-title{font-weight:600;color:var(--text);flex:1 1 260px;}
+.lesson-links{display:flex;gap:8px;flex-wrap:wrap;}
+.lesson-link{display:inline-flex;align-items:center;gap:6px;padding:8px 14px;border-radius:var(--r-sm);border:1px solid var(--border2);background:var(--bg2);color:var(--text);text-decoration:none;font-size:14px;}
+.lesson-link:hover{background:var(--accent-light);border-color:var(--accent);color:var(--accent);}
+.lesson-preview{width:100%;border-collapse:collapse;font-size:13px;margin-top:8px;}
+.lesson-preview th,.lesson-preview td{border-bottom:1px solid var(--border);padding:6px 8px;text-align:left;vertical-align:top;word-break:break-word;}
+.lesson-preview tr.err td{background:var(--danger-light);}
+.lesson-preview tr.warn td{background:#FAEEDA;}
+.lesson-note-err{color:var(--danger);font-weight:600;}
+.lesson-note-warn{color:#854F0B;}
 </style>
 </head>
 <body>
@@ -819,9 +834,11 @@ body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--
         <button class="dict-context-back" id="dictContextBackBtn" onclick="dictContextBack()"><i class="ti ti-arrow-left"></i> <span id="dictContextBackLabel">Back</span></button>
         <h2 class="dict-context-title" id="dictContextTitle"></h2>
         <div id="dictContextActions" style="margin-left:auto;display:none;gap:8px;flex-wrap:wrap;">
+          <button class="btn" id="dictLessonToggle" style="display:none;" aria-expanded="false" aria-controls="dictLessonPanel" onclick="toggleLessonPanel()"><i class="ti ti-books"></i> <span id="dictLessonToggleLabel">Lesson Materials</span> <i class="ti ti-chevron-down" id="dictLessonChevron"></i></button>
           <a class="btn" id="dictContextPptLink" href="#" target="_blank" rel="noopener noreferrer" style="display:none;text-decoration:none;"><i class="ti ti-download"></i> Download PPT</a>
-          <button class="btn" id="dictContextPptEdit" style="display:none;" onclick="editOptionPptLink()"><i class="ti ti-link"></i> <span id="dictContextPptEditLabel">Set PPT link</span></button>
+          <button class="btn" id="dictContextPptEdit" style="display:none;" onclick="openLessonsEditor()"><i class="ti ti-edit"></i> <span id="dictContextPptEditLabel">Edit lessons</span></button>
         </div>
+        <div class="lesson-panel" id="dictLessonPanel" style="display:none;"></div>
       </div>
       <main class="right" id="rightPanel">
         <div class="empty-state"><i class="ti ti-hand-finger"></i><p>Select a sign from the list<br>to view its videos and description.</p></div>
@@ -956,6 +973,20 @@ body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--
 </div>
 
 <!-- Add About Tab modal -->
+<div class="modal-overlay" id="lessonsModal">
+  <div class="modal-box" style="max-width:980px;width:94vw;max-height:92vh;overflow:auto;">
+    <div class="modal-title"><span id="lessonsModalTitle">Lesson materials</span><button class="modal-close" onclick="closeLessonsEditor()"><i class="ti ti-x"></i></button></div>
+    <div style="padding:16px 20px;">
+      <p style="font-size:13px;color:var(--text2);margin-bottom:8px;">One lesson per line, in the order students should see them:<br><code>Lesson title | Student Activity Packet link | Google Slides link</code><br>Either link can be left empty. You can also paste straight from a spreadsheet (tab-separated). Lines starting with <code>#</code> are ignored. Up to 30 lessons.</p>
+      <textarea id="lessonsText" rows="9" style="width:100%;font-family:ui-monospace,Menlo,monospace;font-size:12px;" oninput="renderLessonsPreview()" placeholder="Lesson 1: Taxes and Your Pay Stub | https://docs.google.com/document/d/... | https://docs.google.com/presentation/d/..."></textarea>
+      <div id="lessonsSummary" style="margin-top:10px;font-weight:600;"></div>
+      <div style="overflow-x:auto;"><table class="lesson-preview" id="lessonsPreview"></table></div>
+      <label style="display:flex;gap:8px;align-items:flex-start;margin-top:12px;font-size:14px;"><input type="checkbox" id="lessonsConfirm" onchange="renderLessonsPreview()" style="margin-top:3px;"/> <span>I opened each link with “Test ↗” and confirmed it goes to the right lesson and the right file type.</span></label>
+    </div>
+    <div class="modal-footer"><button class="btn" onclick="closeLessonsEditor()">Cancel</button><button class="btn btn-primary" id="lessonsSaveBtn" onclick="saveLessonsEditor()" disabled><i class="ti ti-check"></i> Save lessons</button></div>
+  </div>
+</div>
+
 <div class="modal-overlay" id="addAboutTabModal">
   <div class="modal-box" style="max-width:420px;">
     <div class="modal-title"><span>New sub-page</span><button class="modal-close" onclick="closeAddAboutTabModal()"><i class="ti ti-x"></i></button></div>
@@ -3574,47 +3605,142 @@ function renderDictContextBar(){
   document.getElementById('dictContextBackLabel').textContent=DICT_CONTEXT.backLabel;
   document.getElementById('dictContextTitle').textContent=DICT_CONTEXT.title;
 
-  // Optional public PPT download for category options (e.g. "Chapter 1").
-  // Stored as customFieldOptions/{id}.pptUrl — a plain https share link
-  // (Google Drive / OneDrive / etc.), so no file storage is needed.
+  // Lesson materials for category options (e.g. MSSD Students → "Chapter 9").
+  // Stored as customFieldOptions/{id}.lessons = [{title, packetUrl, slidesUrl}].
+  // An older single pptUrl is still shown if no lessons exist.
   const opt=currentContextOption();
-  const url=safePptUrl(opt && opt.pptUrl);
+  const lessons=lessonsOf(opt);
+  const legacy=lessons.length?'':safePptUrl(opt && opt.pptUrl);
   const actions=document.getElementById('dictContextActions');
+  const toggle=document.getElementById('dictLessonToggle');
+  const panel=document.getElementById('dictLessonPanel');
   const link=document.getElementById('dictContextPptLink');
   const editBtn=document.getElementById('dictContextPptEdit');
-  if(link){ link.style.display=url?'inline-flex':'none'; if(url) link.href=url; }
+  if(toggle){
+    toggle.style.display=lessons.length?'inline-flex':'none';
+    toggle.setAttribute('aria-expanded','false');
+    document.getElementById('dictLessonToggleLabel').textContent='Lesson Materials ('+lessons.length+')';
+  }
+  if(panel){
+    panel.style.display='none';
+    panel.innerHTML=lessons.map(l=>`
+      <div class="lesson-row">
+        <div class="lesson-title">${esc(l.title)}</div>
+        <div class="lesson-links">
+          ${l.packetUrl?`<a class="lesson-link" href="${esc(l.packetUrl)}" target="_blank" rel="noopener noreferrer"><i class="ti ti-file-text"></i> Student Activity Packet</a>`:''}
+          ${l.slidesUrl?`<a class="lesson-link" href="${esc(l.slidesUrl)}" target="_blank" rel="noopener noreferrer"><i class="ti ti-presentation"></i> Google Slides</a>`:''}
+        </div>
+      </div>`).join('');
+  }
+  if(link){ link.style.display=legacy?'inline-flex':'none'; if(legacy) link.href=legacy; }
   if(editBtn){
     editBtn.style.display=(opt && isAdmin)?'inline-flex':'none';
-    document.getElementById('dictContextPptEditLabel').textContent=url?'Edit PPT link':'Set PPT link';
+    document.getElementById('dictContextPptEditLabel').textContent=lessons.length?'Edit lessons':'Add lessons';
   }
-  if(actions) actions.style.display=(url||(opt&&isAdmin))?'flex':'none';
+  if(actions) actions.style.display=(lessons.length||legacy||(opt&&isAdmin))?'flex':'none';
 }
+window.toggleLessonPanel=function(){
+  const panel=document.getElementById('dictLessonPanel'), btn=document.getElementById('dictLessonToggle');
+  const open=panel.style.display==='none';
+  panel.style.display=open?'block':'none';
+  btn.setAttribute('aria-expanded',open?'true':'false');
+  document.getElementById('dictLessonChevron').className='ti '+(open?'ti-chevron-up':'ti-chevron-down');
+};
 function currentContextOption(){
   const ref=DICT_CONTEXT && DICT_CONTEXT.optionRef; if(!ref) return null;
   return CUSTOM_OPTIONS.find(o=>o.fieldId===ref.fieldId && o.value===ref.value) || null;
 }
-// Only plain https links are ever used as a download href (blocks javascript:, data:, http:).
+// Only plain https links are ever used as an href (blocks javascript:, data:, http:).
 function safePptUrl(u){
   if(typeof u!=='string') return '';
   try{ const x=new URL(u.trim()); return x.protocol==='https:' ? x.href : ''; }catch(e){ return ''; }
 }
-window.editOptionPptLink=async function(){
+// Only lessons with a title and at least one valid link are shown to visitors.
+function lessonsOf(opt){
+  if(!opt || !Array.isArray(opt.lessons)) return [];
+  return opt.lessons.map(l=>({title:String((l&&l.title)||'').trim(),packetUrl:safePptUrl(l&&l.packetUrl),slidesUrl:safePptUrl(l&&l.slidesUrl)}))
+    .filter(l=>l.title && (l.packetUrl||l.slidesUrl));
+}
+
+// ── Admin: batch editor with a preview + checks before anything is saved ──
+const MAX_LESSONS=30;
+const KNOWN_LESSON_HOSTS=/(^|\.)(docs\.google\.com|drive\.google\.com|onedrive\.live\.com|1drv\.ms|sharepoint\.com|dropbox\.com|canva\.com)$/i;
+function parseLessonLines(text){
+  const rows=[]; let n=0;
+  String(text||'').split(/\r?\n/).forEach(raw=>{
+    if(!raw.trim() || raw.trim().startsWith('#')) return;
+    n++;
+    const parts=(raw.includes('\t')?raw.split('\t'):raw.split('|')).map(x=>x.trim());
+    const r={n,title:parts[0]||'',packet:parts[1]||'',slides:parts[2]||'',pu:'',su:'',errors:[],warnings:[]};
+    if(parts.length>3) r.errors.push('More than 3 columns (is there an extra “|” in the title?)');
+    if(!r.title) r.errors.push('Missing lesson title');
+    if(r.title.length>200) r.errors.push('Title is longer than 200 characters');
+    const check=(val,label)=>{
+      if(!val) return '';
+      const u=safePptUrl(val);
+      if(!u){ r.errors.push(label+': link must start with https://'); return ''; }
+      const host=new URL(u).hostname;
+      if(!KNOWN_LESSON_HOSTS.test(host)) r.warnings.push(label+': unfamiliar website ('+host+')');
+      if(host==='docs.google.com' && /\/edit(\?|#|$)/.test(new URL(u).pathname+new URL(u).search)) r.warnings.push(label+': “edit” link — make sure sharing is Viewer, or end it with /copy');
+      return u;
+    };
+    r.pu=check(r.packet,'Packet'); r.su=check(r.slides,'Slides');
+    if(r.pu && /\/presentation\//.test(r.pu)) r.warnings.push('Packet link looks like Google Slides — columns swapped?');
+    if(r.su && /docs\.google\.com/.test(r.su) && !/\/presentation\//.test(r.su)) r.warnings.push('Slides link is not a Google Slides link');
+    if(!r.packet && !r.slides) r.errors.push('No links — add a Packet or Slides link');
+    if(r.pu && r.pu===r.su) r.errors.push('Packet and Slides link are identical');
+    rows.push(r);
+  });
+  const seenT={}, seenU={};
+  rows.forEach(r=>{
+    const t=r.title.toLowerCase(); if(t){ if(seenT[t]) r.warnings.push('Same title as row '+seenT[t]); else seenT[t]=r.n; }
+    [r.pu,r.su].forEach(u=>{ if(!u) return; if(seenU[u]&&seenU[u]!==r.n) r.warnings.push('Link already used in row '+seenU[u]); else seenU[u]=r.n; });
+  });
+  if(rows.length>MAX_LESSONS && rows.length) rows[0].errors.push('Too many lessons ('+rows.length+'); the limit is '+MAX_LESSONS);
+  return rows;
+}
+let LESSON_EDIT_ROWS=[];
+window.renderLessonsPreview=function(){
+  const rows=LESSON_EDIT_ROWS=parseLessonLines(document.getElementById('lessonsText').value);
+  const errs=rows.reduce((a,r)=>a+r.errors.length,0), warns=rows.reduce((a,r)=>a+r.warnings.length,0);
+  const cell=(raw,u)=>u?`${esc(new URL(u).hostname)} <a href="${esc(u)}" target="_blank" rel="noopener noreferrer">Test ↗</a>`:(raw?`<span class="lesson-note-err">${esc(raw)}</span>`:'<span style="color:var(--text3);">—</span>');
+  document.getElementById('lessonsSummary').innerHTML=rows.length
+    ? `${rows.length} lesson${rows.length===1?'':'s'} · <span class="${errs?'lesson-note-err':''}">${errs} error${errs===1?'':'s'}</span> · <span class="${warns?'lesson-note-warn':''}">${warns} warning${warns===1?'':'s'}</span>`
+    : 'No lessons — saving will remove all lesson materials from this chapter.';
+  document.getElementById('lessonsPreview').innerHTML=rows.length
+    ? '<tr><th>#</th><th>Lesson</th><th>Student Activity Packet</th><th>Google Slides</th><th>Checks</th></tr>'+rows.map(r=>`
+      <tr class="${r.errors.length?'err':(r.warnings.length?'warn':'')}">
+        <td>${r.n}</td><td>${esc(r.title)}</td><td>${cell(r.packet,r.pu)}</td><td>${cell(r.slides,r.su)}</td>
+        <td>${r.errors.map(e=>`<div class="lesson-note-err">✖ ${esc(e)}</div>`).join('')}${r.warnings.map(w=>`<div class="lesson-note-warn">⚠ ${esc(w)}</div>`).join('')}${(!r.errors.length&&!r.warnings.length)?'✓':''}</td>
+      </tr>`).join('') : '';
+  document.getElementById('lessonsSaveBtn').disabled = errs>0 || !document.getElementById('lessonsConfirm').checked;
+};
+window.openLessonsEditor=function(){
   if(!isAdmin) return;
   const opt=currentContextOption(); if(!opt) return;
-  const input=prompt('Paste the public share link for this chapter\'s PPT (https://…).\nLeave empty to remove the download button.', opt.pptUrl||'');
-  if(input===null) return;
-  const clean=input.trim();
-  const url=clean ? safePptUrl(clean) : '';
-  if(clean && !url){ showToast('⚠ Link must start with https://'); return; }
-  const before={...opt};
-  const after={...opt, pptUrl:url};
+  document.getElementById('lessonsModalTitle').textContent='Lesson materials — '+opt.value;
+  const lines=(Array.isArray(opt.lessons)?opt.lessons:[]).map(l=>[l.title||'',l.packetUrl||'',l.slidesUrl||''].join(' | '));
+  document.getElementById('lessonsText').value=lines.join('\n');
+  document.getElementById('lessonsConfirm').checked=false;
+  document.getElementById('lessonsModal').classList.add('show');
+  renderLessonsPreview();
+};
+window.closeLessonsEditor=function(){ document.getElementById('lessonsModal').classList.remove('show'); };
+window.saveLessonsEditor=async function(){
+  if(!isAdmin) return;
+  renderLessonsPreview();
+  if(document.getElementById('lessonsSaveBtn').disabled) return;
+  const opt=currentContextOption(); if(!opt) return;
+  const lessons=LESSON_EDIT_ROWS.map(r=>({title:r.title,packetUrl:r.pu,slidesUrl:r.su}));
+  const before={...opt}, after={...opt, lessons};
   showSaving(true);
   try{
     await submitEditWithReview('customFieldOptions', opt.id, opt.value, before, after);
     patchGlobalAfterSave('customFieldOptions', opt.id, after);
     regeneratePublicSnapshot();
-    showToast(url?'PPT link saved':'PPT link removed');
-  }catch(err){ console.error(err); showToast('⚠ Could not save PPT link.'); }
+    showToast(lessons.length?'Lessons saved':'Lessons removed');
+    closeLessonsEditor();
+  }catch(err){ console.error(err); showToast('⚠ Could not save lessons.'); }
   finally{ showSaving(false); }
   renderDictContextBar();
 };
