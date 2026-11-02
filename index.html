@@ -685,6 +685,32 @@ body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--
 .lesson-preview tr.warn td{background:#FAEEDA;}
 .lesson-note-err{color:var(--danger);font-weight:600;}
 .lesson-note-warn{color:#854F0B;}
+
+/* ══ Mobile polish (touch comfort) ══ */
+/* iOS Safari zooms the whole page when a field under 16px gets focus (search box, selects). */
+@supports (-webkit-touch-callout:none){
+  @media (max-width:768px){ input,select,textarea{font-size:16px !important;} }
+}
+@media (max-width:768px){
+  .vid-tab{min-height:44px;font-size:13px;}
+  .word-row{padding:12px 14px;}
+  .word-en{font-size:15px;}
+  .word-sub{font-size:12px;}
+  .pill{font-size:11px;}
+  .dict-context-bar{padding:14px 16px;gap:10px 12px;}
+  .dict-context-title{font-size:24px;}
+  #dictContextActions{margin-left:0 !important;width:100%;}
+  #dictContextActions .btn{flex:1 1 auto;justify-content:center;min-height:44px;}
+  .lesson-panel{padding:4px 12px;}
+  .lesson-links{width:100%;}
+  .lesson-link{flex:1 1 100%;justify-content:center;min-height:44px;}
+}
+/* Touch screens have no real hover: stop highlights from "sticking" after a tap. */
+@media (hover:none){
+  .word-row:hover:not(.active){background:transparent;}
+  .entry-nav-btn:hover,.dict-context-back:hover,.lesson-link:hover{border-color:var(--border2);color:inherit;background:var(--bg2);}
+  .dict-context-back:hover{background:var(--bg);}
+}
 </style>
 </head>
 <body>
@@ -974,7 +1000,7 @@ body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--
 
 <!-- Add About Tab modal -->
 <div class="modal-overlay" id="lessonsModal">
-  <div class="modal-box" style="max-width:980px;width:94vw;max-height:92vh;overflow:auto;">
+  <div class="modal-box" style="max-width:980px;width:94vw;max-height:92vh;max-height:92dvh;overflow:auto;">
     <div class="modal-title"><span id="lessonsModalTitle">Lesson materials</span><button class="modal-close" onclick="closeLessonsEditor()"><i class="ti ti-x"></i></button></div>
     <div style="padding:16px 20px;">
       <p style="font-size:13px;color:var(--text2);margin-bottom:8px;">One lesson per line, in the order students should see them:<br><code>Lesson title | Student Activity Packet link | Google Slides link</code><br>Either link can be left empty. You can also paste straight from a spreadsheet (tab-separated). Lines starting with <code>#</code> are ignored. Up to 30 lessons.</p>
