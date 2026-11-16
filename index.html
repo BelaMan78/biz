@@ -721,6 +721,15 @@ body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--
   .entry-nav-btn:hover,.dict-context-back:hover,.lesson-link:hover{border-color:var(--border2);color:inherit;background:var(--bg2);}
   .dict-context-back:hover{background:var(--bg);}
 }
+
+/* ── Book covers (second layer of a custom category) ── */
+.book-card{cursor:pointer;display:flex;flex-direction:column;gap:8px;outline:none;}
+.book-cover{aspect-ratio:3/4;border-radius:var(--r-lg);overflow:hidden;border:0.5px solid var(--border);background:var(--bg2);box-shadow:0 2px 10px rgba(0,0,0,.14);display:flex;align-items:center;justify-content:center;transition:transform .15s,box-shadow .15s;}
+.book-card:hover .book-cover,.book-card:focus-visible .book-cover{transform:translateY(-4px);box-shadow:0 8px 20px rgba(0,0,0,.22);}
+.book-cover img{width:100%;height:100%;object-fit:cover;display:block;}
+.book-ph{padding:14px;text-align:center;font-weight:600;color:var(--text2);font-size:14px;line-height:1.3;}
+.book-title{font-weight:600;font-size:14px;color:var(--text);line-height:1.3;}
+.book-count{font-size:12px;color:var(--text3);margin-top:-4px;}
 </style>
 </head>
 <body>
@@ -3384,6 +3393,8 @@ window.showPage=function(p,extra){
   if(p==='login'){ document.getElementById('pageLogin').classList.add('active'); }
   else if(p==='topics'){ document.getElementById('pageTopics').classList.add('active'); document.querySelectorAll('.nav-item[data-page="topics"]').forEach(el=>el.classList.add('active')); (dataLoadedPromise||Promise.resolve()).then(renderTopicsLanding); }
   else if(p==='catopt'){
+    if(!catOptKeepBook) catOptActiveBook=null; // arriving from the nav/landing → show the books first
+    catOptKeepBook=false;
     activeCatOptFieldId=extra||null;
     document.getElementById('pageCategoryOptions').classList.add('active');
     document.querySelectorAll('.nav-item[data-page="topics"]').forEach(el=>el.classList.add('active'));
@@ -3743,6 +3754,11 @@ window.goToCategoryOptions=function(fieldId){
 
 /* ══ SECOND-LAYER CATEGORY-OPTIONS PAGE (e.g. Book → BUS201, BUS202) ══ */
 let catOptManageMode=false;
+// Optional "book" layer: category → BOOK (cover card) → CHAPTERS (the existing option cards) → signs.
+// Books live on the category doc (customFields/{id}.books = [{id,title,cover,order}]); a chapter
+// (customFieldOptions doc) points at its book with .bookId. A category with no books behaves exactly as before.
+let catOptActiveBook=null, catOptKeepBook=false;
+const BOOK_NONE='__none';
 
 function optionItemsFor(fieldId){
   return CUSTOM_OPTIONS.filter(o=>o.fieldId===fieldId).sort((a,b)=>(a.order??9999)-(b.order??9999));
@@ -3765,6 +3781,193 @@ window.renameCatOptCard=async function(fieldId,optId){
   await renameCustomValue(fieldId,optId,nv);
   renderCategoryOptionsPage(fieldId);
 };
+
+/* ══ BOOKS (cover cards above the chapter cards) ══ */
+function booksOf(cf){
+  return (Array.isArray(cf && cf.books) ? cf.books : []).filter(b=>b && b.id && b.title)
+    .slice().sort((a,b)=>(a.order??9999)-(b.order??9999));
+}
+// Covers are stored as small data: URLs; anything else in the field is ignored, never rendered.
+function safeCover(src){
+  return (typeof src==='string' && /^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+\/=]+$/.test(src)) ? src : '';
+}
+function syncBookToolbar(){
+  const tb=document.getElementById('catOptToolbar'); if(!tb) return;
+  let b=document.getElementById('catOptAddBookBtn');
+  if(!b){
+    b=document.createElement('button'); b.className='btn'; b.id='catOptAddBookBtn';
+    b.innerHTML='<i class="ti ti-book-2"></i> Add book';
+    b.onclick=()=>openBookEditor(activeCatOptFieldId,null);
+    tb.appendChild(b);
+  }
+  b.style.display=(isAdmin && catOptManageMode && !catOptActiveBook) ? 'inline-flex' : 'none';
+}
+function bookPickerHtml(fieldId,opt,books){
+  if(!books.length) return '';
+  const cur=books.some(b=>b.id===opt.bookId) ? opt.bookId : '';
+  return `<select class="book-picker" draggable="false" onclick="event.stopPropagation()" onchange="assignChapterBook(${jsStr(fieldId)},${jsStr(opt.id)},this.value)" style="margin-top:6px;font-size:12px;max-width:100%;" title="Which book this chapter belongs to"><option value=""${cur===''?' selected':''}>— No book —</option>${books.map(b=>`<option value="${esc(b.id)}"${cur===b.id?' selected':''}>${esc(b.title)}</option>`).join('')}</select>`;
+}
+function renderBooksGrid(cf,books,allOptions,grid){
+  const mg=catOptManageMode && isAdmin;
+  const visCh=o=>o.showOnLanding!==false && countForOption(cf.id,o.value)>0;
+  grid.style.gridTemplateColumns='repeat(auto-fill,minmax(180px,1fr))';
+  const fid=jsStr(cf.id);
+  const cards=[];
+  books.forEach((b,i)=>{
+    const chs=allOptions.filter(o=>o.bookId===b.id);
+    const n=mg ? chs.length : chs.filter(visCh).length;
+    if(!mg && n===0) return; // visitors only see books that have chapters with signs
+    const cover=safeCover(b.cover);
+    const coverHtml=cover
+      ? `<img src="${cover}" alt="${esc(b.title)} — cover" loading="lazy">`
+      : `<div class="book-ph"><i class="ti ti-book-2" style="font-size:34px;display:block;margin-bottom:8px;"></i>${esc(b.title)}</div>`;
+    const actions=mg ? `<div class="topic-card-mg-actions" style="position:static;flex-wrap:wrap;justify-content:flex-start;margin-top:4px;">
+        <button class="topic-card-mg-btn" title="Move left" ${i===0?'disabled':''} onclick="event.stopPropagation();moveBook(${fid},${jsStr(b.id)},-1)"><i class="ti ti-arrow-left"></i></button>
+        <button class="topic-card-mg-btn" title="Move right" ${i===books.length-1?'disabled':''} onclick="event.stopPropagation();moveBook(${fid},${jsStr(b.id)},1)"><i class="ti ti-arrow-right"></i></button>
+        <button class="topic-card-mg-btn" onclick="event.stopPropagation();openBookEditor(${fid},${jsStr(b.id)})"><i class="ti ti-pencil"></i> Edit</button>
+        <button class="topic-card-mg-btn danger" onclick="event.stopPropagation();deleteBook(${fid},${jsStr(b.id)})"><i class="ti ti-trash"></i> Delete</button>
+      </div>` : '';
+    cards.push(`<div class="book-card" role="button" tabindex="0" onclick="openCatOptBook(${fid},${jsStr(b.id)})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();this.click();}">
+      <div class="book-cover">${coverHtml}</div>
+      <div class="book-title">${esc(b.title)}</div>
+      <div class="book-count">${n} chapter${n===1?'':'s'}</div>${actions}
+    </div>`);
+  });
+  const un=allOptions.filter(o=>!books.some(b=>b.id===o.bookId));
+  const nun=mg ? un.length : un.filter(visCh).length;
+  if(nun>0){
+    cards.push(`<div class="book-card" role="button" tabindex="0" onclick="openCatOptBook(${fid},${jsStr(BOOK_NONE)})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();this.click();}">
+      <div class="book-cover"><div class="book-ph"><i class="ti ti-folder" style="font-size:34px;display:block;margin-bottom:8px;"></i>${mg?'Chapters not in a book yet':'Other chapters'}</div></div>
+      <div class="book-title">${mg?'Unassigned':'Other chapters'}</div>
+      <div class="book-count">${nun} chapter${nun===1?'':'s'}</div>
+    </div>`);
+  }
+  grid.innerHTML=cards.length ? cards.join('') : `<div class="topics-empty-state" style="grid-column:1/-1;"><i class="ti ti-book-2"></i>No books with chapters yet.</div>`;
+}
+window.openCatOptBook=function(fieldId,bookId){ catOptActiveBook=bookId; renderCategoryOptionsPage(fieldId); window.scrollTo(0,0); };
+window.closeCatOptBook=function(){ catOptActiveBook=null; renderCategoryOptionsPage(activeCatOptFieldId); window.scrollTo(0,0); };
+
+async function saveBooks(fieldId,newBooks){
+  const cf=CUSTOM_FIELDS.find(f=>f.id===fieldId); if(!cf) return false;
+  showSaving(true);
+  try{ await setDoc(doc(db,'customFields',fieldId), {books:newBooks}, {merge:true}); }
+  catch(err){ console.error(err); showToast('⚠ Could not save ('+(err&&err.code?err.code:'error')+').'); showSaving(false); return false; }
+  showSaving(false);
+  cf.books=newBooks;
+  patchGlobalAfterSave('customFields',fieldId,cf);
+  regeneratePublicSnapshot();
+  return true;
+}
+window.moveBook=async function(fieldId,bookId,dir){
+  const cf=CUSTOM_FIELDS.find(f=>f.id===fieldId); if(!cf) return;
+  const list=booksOf(cf); const i=list.findIndex(b=>b.id===bookId); const j=i+dir;
+  if(i<0||j<0||j>=list.length) return;
+  [list[i],list[j]]=[list[j],list[i]];
+  if(await saveBooks(fieldId,list.map((b,k)=>({...b,order:k})))) renderCategoryOptionsPage(fieldId);
+};
+window.deleteBook=async function(fieldId,bookId){
+  const cf=CUSTOM_FIELDS.find(f=>f.id===fieldId); if(!cf) return;
+  const bk=booksOf(cf).find(b=>b.id===bookId); if(!bk) return;
+  const chs=CUSTOM_OPTIONS.filter(o=>o.fieldId===fieldId && o.bookId===bookId);
+  if(!confirm('Delete the book "'+bk.title+'"?\n\nIts '+chs.length+' chapter(s) and all signs are NOT deleted — the chapters just become "unassigned" until you move them to another book.')) return;
+  if(!await saveBooks(fieldId,booksOf(cf).filter(b=>b.id!==bookId).map((b,k)=>({...b,order:k})))) return;
+  try{
+    for(let i=0;i<chs.length;i+=400){
+      const batch=writeBatch(db);
+      chs.slice(i,i+400).forEach(o=>batch.set(doc(db,'customFieldOptions',o.id),{bookId:deleteField()},{merge:true}));
+      await batch.commit();
+    }
+    chs.forEach(o=>{ delete o.bookId; });
+    regeneratePublicSnapshot();
+  }catch(err){ console.error(err); showToast('⚠ Book deleted, but some chapters could not be unassigned.'); }
+  catOptActiveBook=null;
+  renderCategoryOptionsPage(fieldId);
+  showToast('Book deleted');
+};
+window.assignChapterBook=async function(fieldId,optId,bookId){
+  const opt=CUSTOM_OPTIONS.find(o=>o.id===optId); if(!opt) return;
+  showSaving(true);
+  try{ await setDoc(doc(db,'customFieldOptions',optId), bookId?{bookId}:{bookId:deleteField()}, {merge:true}); }
+  catch(err){ console.error(err); showToast('⚠ Could not move chapter.'); showSaving(false); renderCategoryOptionsPage(fieldId); return; }
+  showSaving(false);
+  if(bookId) opt.bookId=bookId; else delete opt.bookId;
+  regeneratePublicSnapshot();
+  renderCategoryOptionsPage(fieldId);
+  showToast('Chapter moved');
+};
+
+// Resize + recompress the chosen cover in the browser, so a 5 MB phone photo becomes ~40–60 KB.
+async function coverFileToDataUrl(file){
+  if(!/^image\/(jpeg|png|webp)$/.test(file.type)) throw new Error('Please choose a JPG, PNG or WebP image.');
+  if(file.size>15*1024*1024) throw new Error('That image is too large (max 15 MB).');
+  const url=URL.createObjectURL(file);
+  try{
+    const img=await new Promise((res,rej)=>{ const i=new Image(); i.onload=()=>res(i); i.onerror=()=>rej(new Error('Could not read that image.')); i.src=url; });
+    const scale=Math.min(1, 420/img.naturalWidth, 600/img.naturalHeight);
+    const w=Math.max(1,Math.round(img.naturalWidth*scale)), hgt=Math.max(1,Math.round(img.naturalHeight*scale));
+    const c=document.createElement('canvas'); c.width=w; c.height=hgt;
+    const ctx=c.getContext('2d'); ctx.fillStyle='#fff'; ctx.fillRect(0,0,w,hgt); ctx.drawImage(img,0,0,w,hgt);
+    let q=0.86, out=c.toDataURL('image/jpeg',q);
+    while(out.length>200000 && q>0.5){ q-=0.1; out=c.toDataURL('image/jpeg',q); }
+    return out;
+  } finally { URL.revokeObjectURL(url); }
+}
+let bookEditState=null;
+window.closeBookEditor=function(){ const o=document.getElementById('bookEditorOverlay'); if(o) o.remove(); bookEditState=null; };
+function paintBookCoverPreview(){
+  const el=document.getElementById('bookCoverPreview'); if(!el||!bookEditState) return;
+  const c=bookEditState.cover;
+  el.innerHTML=c
+    ? `<img src="${c}" alt="Cover preview" style="width:130px;aspect-ratio:3/4;object-fit:cover;border-radius:8px;border:0.5px solid var(--border);"/> <button class="btn" type="button" onclick="clearBookCover()" style="margin-left:10px;">Remove cover</button>`
+    : `<div style="font-size:12px;color:var(--text3);">No cover yet — the book shows its title on a plain tile.</div>`;
+}
+window.clearBookCover=function(){ if(bookEditState){ bookEditState.cover=''; const f=document.getElementById('bookCoverInput'); if(f) f.value=''; paintBookCoverPreview(); } };
+window.openBookEditor=function(fieldId,bookId){
+  const cf=CUSTOM_FIELDS.find(f=>f.id===fieldId); if(!cf) return;
+  closeBookEditor();
+  const book=bookId ? booksOf(cf).find(b=>b.id===bookId) : null;
+  bookEditState={fieldId, bookId:book?book.id:null, cover:book?safeCover(book.cover):''};
+  const ov=document.createElement('div'); ov.id='bookEditorOverlay';
+  ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px;';
+  ov.innerHTML=`<div role="dialog" aria-modal="true" style="background:var(--bg);color:var(--text);border-radius:var(--r-lg);padding:22px;width:100%;max-width:420px;max-height:90vh;overflow:auto;box-shadow:0 10px 40px rgba(0,0,0,.3);">
+    <h3 style="margin:0 0 14px;">${book?'Edit book':'Add book'}</h3>
+    <div class="form-field"><label>Book title</label><input type="text" id="bookTitleInput" maxlength="80" value="${esc(book?book.title:'')}"/></div>
+    <div class="form-field"><label>Cover image (JPG, PNG or WebP)</label><input type="file" id="bookCoverInput" accept="image/jpeg,image/png,image/webp"/></div>
+    <div id="bookCoverPreview" style="display:flex;align-items:flex-end;margin:6px 0 4px;"></div>
+    <div id="bookEditorErr" style="display:none;color:var(--vexample,#c0392b);font-size:12px;margin-top:8px;"></div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px;"><button class="btn" type="button" onclick="closeBookEditor()">Cancel</button><button class="btn btn-primary" type="button" id="bookSaveBtn" onclick="saveBookEditor()">Save</button></div>
+  </div>`;
+  document.body.appendChild(ov);
+  ov.addEventListener('mousedown',e=>{ if(e.target===ov) closeBookEditor(); });
+  ov.addEventListener('keydown',e=>{ if(e.key==='Escape') closeBookEditor(); });
+  document.getElementById('bookCoverInput').onchange=async e=>{
+    const f=e.target.files&&e.target.files[0]; const err=document.getElementById('bookEditorErr');
+    err.style.display='none'; if(!f) return;
+    try{ bookEditState.cover=await coverFileToDataUrl(f); paintBookCoverPreview(); }
+    catch(ex){ err.textContent=ex.message; err.style.display='block'; e.target.value=''; }
+  };
+  paintBookCoverPreview();
+  document.getElementById('bookTitleInput').focus();
+};
+window.saveBookEditor=async function(){
+  if(!bookEditState) return;
+  const {fieldId,bookId,cover}=bookEditState;
+  const cf=CUSTOM_FIELDS.find(f=>f.id===fieldId); if(!cf) return;
+  const err=document.getElementById('bookEditorErr');
+  const title=document.getElementById('bookTitleInput').value.trim();
+  if(!title){ err.textContent='Please enter the book title.'; err.style.display='block'; return; }
+  const list=booksOf(cf);
+  if(list.some(b=>b.id!==bookId && b.title.toLowerCase()===title.toLowerCase())){ err.textContent='A book with that title already exists.'; err.style.display='block'; return; }
+  let next;
+  if(bookId) next=list.map(b=>b.id===bookId?{...b,title,cover}:b);
+  else next=[...list,{id:'book_'+Date.now().toString(36), title, cover, order:list.length}];
+  document.getElementById('bookSaveBtn').disabled=true;
+  const ok=await saveBooks(fieldId,next);
+  if(!ok){ const b=document.getElementById('bookSaveBtn'); if(b) b.disabled=false; return; }
+  closeBookEditor();
+  renderCategoryOptionsPage(fieldId);
+  showToast(bookId?'Book updated':'Book added');
+};
 window.renderCategoryOptionsPage=function(fieldId){
   const cf=CUSTOM_FIELDS.find(f=>f.id===fieldId);
   const grid=document.getElementById('catOptGrid'); if(!grid) return;
@@ -3786,6 +3989,17 @@ window.renderCategoryOptionsPage=function(fieldId){
   // here at all — different from the Topics-landing page, where unused
   // cards still show (just faded) so admins can see what's empty.
   let allOptions=optionItemsFor(fieldId);
+  const books=booksOf(cf);
+  if(!books.length || (catOptActiveBook && catOptActiveBook!==BOOK_NONE && !books.some(b=>b.id===catOptActiveBook))) catOptActiveBook=null;
+  syncBookToolbar();
+  grid.style.gridTemplateColumns='';
+  if(books.length && !catOptActiveBook){ renderBooksGrid(cf,books,allOptions,grid); return; }
+  let chapterHeader='';
+  if(catOptActiveBook){
+    const bk=books.find(b=>b.id===catOptActiveBook);
+    allOptions=allOptions.filter(o=> catOptActiveBook===BOOK_NONE ? !books.some(b=>b.id===o.bookId) : o.bookId===catOptActiveBook);
+    chapterHeader=`<div style="grid-column:1/-1;display:flex;align-items:center;gap:12px;flex-wrap:wrap;"><button class="btn" onclick="closeCatOptBook()"><i class="ti ti-arrow-left"></i> All books</button><h2 style="margin:0;font-size:20px;">${esc(bk?bk.title:'Other chapters')}</h2></div>`;
+  }
   let visibleOptions = allOptions
     .map(o=>({...o, count:countForOption(fieldId,o.value)}))
     .filter(o=>o.count>0 && o.showOnLanding!==false);
@@ -3797,7 +4011,7 @@ window.renderCategoryOptionsPage=function(fieldId){
   }
 
   if(!visibleOptions.length){
-    grid.innerHTML=`<div class="topics-empty-state" style="grid-column:1/-1;"><i class="ti ti-category"></i>No ${esc(cf.name)} options with signs yet.</div>`;
+    grid.innerHTML=chapterHeader+`<div class="topics-empty-state" style="grid-column:1/-1;"><i class="ti ti-category"></i>No ${esc(cf.name)} options with signs yet.</div>`;
     return;
   }
 
@@ -3813,6 +4027,7 @@ window.renderCategoryOptionsPage=function(fieldId){
         <div class="topic-card-name">${esc(opt.value)}</div>
         <div class="topic-card-count">${opt.count} sign${opt.count===1?'':'s'}</div>
         ${desc}${pending}
+        ${bookPickerHtml(fieldId,opt,books)}
         <div class="topic-card-mg-actions">
           <button class="topic-card-mg-btn" onclick="event.stopPropagation();renameCatOptCard(${jsStr(fieldId)},${jsStr(opt.id)})"><i class="ti ti-pencil"></i> Rename</button>
           <button class="topic-card-mg-btn danger" onclick="event.stopPropagation();removeCatOptCard(${jsStr(fieldId)},${jsStr(opt.id)})"><i class="ti ti-eye-off"></i> Remove card</button>
@@ -3826,7 +4041,7 @@ window.renderCategoryOptionsPage=function(fieldId){
       ${desc}
     </div>`;
   }).join('');
-  grid.innerHTML=cards;
+  grid.innerHTML=chapterHeader+cards;
   if(catOptManageMode) wireCatOptDrag(fieldId);
 };
 
@@ -3886,7 +4101,11 @@ window.removeCatOptCard=async function(fieldId,optId){
 // landing page — Book is where this option card lived, two layers down.
 window.goToCategoryOption=function(fieldId,value){
   const cf=CUSTOM_FIELDS.find(f=>f.id===fieldId);
-  DICT_CONTEXT = { title:value, backLabel:'Back to '+(cf?cf.name:'category'), backAction:()=>showPage('catopt',fieldId), optionRef:{fieldId,value} };
+  const optDoc=CUSTOM_OPTIONS.find(o=>o.fieldId===fieldId && o.value===value);
+  const fbooks=booksOf(cf);
+  const bk=fbooks.length ? (fbooks.find(b=>b.id===(optDoc&&optDoc.bookId))||null) : null;
+  const bookKey=fbooks.length ? (bk?bk.id:BOOK_NONE) : null;
+  DICT_CONTEXT = { title:value, backLabel:'Back to '+(bk?bk.title:(cf?cf.name:'category')), backAction:()=>{ catOptActiveBook=bookKey; catOptKeepBook=true; showPage('catopt',fieldId); }, optionRef:{fieldId,value} };
   showPage('dict','keep-context');
   resetFilters();
   closeAdvPanel();
@@ -6780,6 +6999,31 @@ window.switchAdminTab=async function(tab){
 };
 
 /* ══ CATEGORIES & TAGS PANEL (per-document model) ══ */
+// Rename a custom CATEGORY itself (e.g. "MSSD Students"). Its name appears in the card title, the
+// sign editor, filters, top nav, Topics card and category page, so all of those are refreshed.
+// Signs store values under cf_<id>, not the name, so no sign needs rewriting.
+window.renameCustomCategory=async function(fieldId){
+  const cf=CUSTOM_FIELDS.find(f=>f.id===fieldId); if(!cf) return;
+  const nv=prompt('Rename this category:', cf.name);
+  if(nv===null) return;
+  const name=nv.trim();
+  if(!name || name===cf.name) return;
+  if(name.length>60){ showToast('Name is too long (max 60 characters).'); return; }
+  if(CUSTOM_FIELDS.some(f=>f.id!==cf.id && f.name.toLowerCase()===name.toLowerCase())){ showToast('A category with that name already exists.'); return; }
+  const updates={name};
+  if(!cf.heroTitle || cf.heroTitle===cf.name) updates.heroTitle=name; // keep the page heading in step unless it was customised
+  showSaving(true);
+  try{ await setDoc(doc(db,'customFields',cf.id),updates,{merge:true}); }
+  catch(err){ console.error(err); showToast('⚠ Could not rename ('+(err&&err.code?err.code:'error')+').'); showSaving(false); return; }
+  showSaving(false);
+  Object.assign(cf,updates);
+  patchGlobalAfterSave('customFields',cf.id,cf);
+  regeneratePublicSnapshot();
+  renderOptionsPanel(); buildFilterPanel(); doFilter();
+  if(typeof renderHeaderNav==='function') renderHeaderNav();
+  if(typeof rerenderActiveLandingSurface==='function') rerenderActiveLandingSurface();
+  showToast('Category renamed');
+};
 function renderOptionsPanel(){
   const wrap=document.getElementById('optionsCardsWrap'); wrap.innerHTML='';
   appendBuiltinCard(wrap,'Categories','categories',CATEGORIES,'multiselect','cat','Multi-select on each sign.');
@@ -6831,7 +7075,7 @@ function makeCustomCard(cf){
   const optionsSection=cf.type==='paragraph'?`<p style="font-size:12px;color:var(--text3);padding:4px 2px;font-style:italic;">Paragraph fields don't have preset options — admins enter text per sign.</p>`:`<div class="options-list" id="${listId}"></div><div class="options-add-row"><input type="text" id="newc_${cf.id}" placeholder="New value..." onkeydown="if(event.key==='Enter')addCustomValue(${jsStr(cf.id)})"/><button onclick="addCustomValue(${jsStr(cf.id)})">Add</button></div>`;
   card.innerHTML=`
     <div class="options-card-title" style="display:flex;align-items:center;justify-content:space-between;">
-      <span>${esc(cf.name)} <span style="font-size:10px;color:var(--text3);font-weight:400;">${typeLabel}</span>${rBadge}</span>
+      <span>${esc(cf.name)} <button class="row-btn" onclick="renameCustomCategory(${jsStr(cf.id)})" title="Rename this category" style="vertical-align:middle;"><i class="ti ti-pencil"></i></button> <span style="font-size:10px;color:var(--text3);font-weight:400;">${typeLabel}</span>${rBadge}</span>
       <button class="row-btn del" onclick="deleteCustomCategory(${jsStr(cf.id)})" title="Delete this category"><i class="ti ti-trash"></i></button>
     </div>
     <div class="options-card-sub">Custom category — appears in sign editor and filters.</div>
