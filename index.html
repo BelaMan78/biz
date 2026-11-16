@@ -4,6 +4,14 @@
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
 <title>SignBiz — Business Sign Language Dictionary</title>
+<meta name="description" content="SignBiz is an online American Sign Language (ASL) video dictionary of business and finance vocabulary: banking, investing, credit, taxes, insurance, budgeting and careers. From the Gallaudet University Department of Business."/>
+<link rel="canonical" href="https://signbusiness.org/"/>
+<meta property="og:url" content="https://signbusiness.org/"/>
+<meta property="og:type" content="website"/>
+<meta property="og:site_name" content="SignBiz"/>
+<meta property="og:title" content="SignBiz — Business Sign Language Dictionary"/>
+<meta property="og:description" content="ASL video dictionary of business and finance vocabulary: banking, investing, credit, taxes, insurance, budgeting and careers."/>
+<meta name="twitter:card" content="summary"/>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.19.0/dist/tabler-icons.min.css"/>
 <!--
 
@@ -434,6 +442,8 @@ body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--
 .topics-hero{text-align:center;margin-bottom:36px;position:relative;}
 .topics-hero h1{font-size:26px;font-weight:500;color:var(--text);margin-bottom:8px;}
 .topics-hero p{font-size:14px;color:var(--text2);max-width:560px;margin:0 auto;line-height:1.6;white-space:pre-wrap;}
+.topics-hero p.hero-credit{font-size:13px;font-style:italic;color:var(--text3);margin-top:10px;}
+.topics-hero p:empty{display:none;}
 .topics-hero-edit-btn{position:absolute;top:0;right:0;}
 .topics-hero-form{max-width:480px;margin:0 auto;text-align:left;background:var(--bg);border:0.5px solid var(--border);border-radius:var(--r-lg);padding:18px 20px;}
 .topics-toolbar{display:flex;justify-content:flex-end;gap:8px;margin-bottom:18px;}
@@ -815,10 +825,12 @@ body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--
       <div id="catOptHeroView">
         <h1 id="catOptHeroTitle">Category</h1>
         <p id="catOptHeroBody"></p>
+        <p id="catOptHeroCredit" class="hero-credit"></p>
       </div>
       <div class="topics-hero-form" id="catOptHeroForm" style="display:none;">
         <div class="form-field"><label>Title</label><input type="text" id="catOptHeroTitleInput"/></div>
-        <div class="form-field"><label>Description</label><textarea id="catOptHeroBodyInput"></textarea></div>
+        <div class="form-field"><label>Description</label><textarea id="catOptHeroBodyInput" rows="5"></textarea></div>
+        <div class="form-field"><label>Authorship / credit (shown under the description)</label><textarea id="catOptHeroCreditInput" rows="2"></textarea></div>
         <div class="form-footer"><button class="btn" onclick="cancelCatOptHeroEdit()">Cancel</button><button class="btn btn-primary" onclick="saveCatOptHeroContent()">Save</button></div>
       </div>
     </div>
@@ -1245,7 +1257,7 @@ body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--
 <script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"></script>
 <script type="module">
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js';
-import { getFirestore, collection, doc, getDoc, getDocs, setDoc, deleteDoc, addDoc, query, where, orderBy, onSnapshot, writeBatch }
+import { getFirestore, collection, doc, getDoc, getDocs, setDoc, deleteDoc, addDoc, query, where, orderBy, onSnapshot, writeBatch, deleteField }
   from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
 import { getAuth, onAuthStateChanged, signInWithEmailAndPassword, signInWithPopup, GoogleAuthProvider, signOut }
   from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js';
@@ -1380,6 +1392,29 @@ function esc(str){
 // decodes entities before running inline JS, so a smuggled quote could still break out).
 // Stripping to the actual valid YouTube ID charset closes that off entirely.
 function safeYtId(id){ return String(id||'').replace(/[^A-Za-z0-9_-]/g,''); }
+// Admins naturally paste a full YouTube link (youtu.be/…, watch?v=…, /embed/…, /shorts/…)
+// into the "Video ID" box. safeYtId() alone would just strip the punctuation and silently
+// turn "https://youtu.be/dQw4w9WgXcQ" into the garbage ID "httpsyoutubedQw4w9WgXcQ".
+// This pulls the real 11-character ID out of any of those forms first.
+const YT_ID_RE=/^[A-Za-z0-9_-]{11}$/;
+function extractYtId(input){
+  const s=String(input||'').trim();
+  if(!s) return '';
+  if(YT_ID_RE.test(s)) return s;
+  try{
+    const u=new URL(/^https?:\/\//i.test(s) ? s : 'https://'+s);
+    const host=u.hostname.replace(/^(www|m)\./,'');
+    let id='';
+    if(host==='youtu.be') id=u.pathname.split('/')[1]||'';
+    else if(host==='youtube.com' || host==='youtube-nocookie.com'){
+      id=u.searchParams.get('v')||'';
+      if(!id){ const m=u.pathname.match(/^\/(?:embed|shorts|live|v)\/([^/?#]+)/); if(m) id=m[1]; }
+    }
+    id=safeYtId(id);
+    if(YT_ID_RE.test(id)) return id;
+  }catch(e){ /* not a URL — fall through */ }
+  return safeYtId(s);
+}
 // Same rationale as safeYtId: Firestore doc IDs we generate ourselves only ever
 // contain [A-Za-z0-9_-]. Some doc IDs we render (feedback/feedbackComments'
 // own id, and their attacker-settable `signId` field — those collections
@@ -1476,12 +1511,18 @@ function vidArr(w,type){
 ══════════════════════════════════════ */
 function showSaving(on){ document.getElementById('savingIndicator').style.display=on?'flex':'none'; }
 
+// A sign doc with no `en` string (e.g. a half-written/rolled-back doc) used to crash every
+// `w.en.toLowerCase()` / `a.en.localeCompare()` in search, sorting and the admin table.
+function normalizeSigns(arr){
+  return (arr||[]).map(w=>(w && typeof w.en==='string') ? w : {...(w||{}), en:String((w&&w.en)??'')});
+}
 async function loadCollection(name){
   const snap = await getDocs(collection(db,name));
   // Items a staff admin has "deleted" are soft-hidden (_hidden:true) pending
   // Main Admin review. Everyone (guests AND staff) works off the filtered
   // list day-to-day; only the Pending Review tab reads the raw documents.
-  return snap.docs.map(d=>({id:d.id,...d.data()})).filter(d=>!d._hidden);
+  const rows=snap.docs.map(d=>({id:d.id,...d.data()})).filter(d=>!d._hidden);
+  return name==='signs' ? normalizeSigns(rows) : rows;
 }
 
 /* ══════════════════════════════════════
@@ -1528,19 +1569,49 @@ function chunkDictionaryForSnapshot(words){
 // Failures are logged, not surfaced to the admin, and never block their
 // save — worst case, visitors keep serving the previous (still-correct-
 // enough) snapshot until the next successful write retries this.
+//
+// Calls are COALESCED: if a rebuild is already running (e.g. deleting a category with
+// 20 options used to trigger 21 parallel rebuilds, each rewriting every chunk doc), the
+// extra calls just flag "run once more when you finish" — and that final run serializes
+// the latest in-memory state, which is also what callers that mutate WORDS right after
+// calling this actually want.
+let snapshotRegenRunning=false, snapshotRegenQueued=false;
 async function regeneratePublicSnapshot(){
+  if(snapshotRegenRunning){ snapshotRegenQueued=true; return; }
+  snapshotRegenRunning=true;
   try{
+    do{ snapshotRegenQueued=false; await regeneratePublicSnapshotNow(); }
+    while(snapshotRegenQueued);
+  } finally { snapshotRegenRunning=false; }
+}
+async function regeneratePublicSnapshotNow(){
+  try{
+    const v=Date.now(); // one version stamp shared by every doc of this snapshot
     const listsPayload=JSON.stringify({
       categories:CATEGORIES, topics:TOPICS, difficulties:DIFFICULTIES,
       tags:SPECIAL_TAGS, handshapes:HANDSHAPES,
       customFields:CUSTOM_FIELDS, customFieldOptions:CUSTOM_OPTIONS
     });
     const chunks=chunkDictionaryForSnapshot(WORDS);
-    await Promise.all([
-      setDoc(doc(db,'publicSnapshot','lists'), {json:listsPayload, updatedAt:Date.now()}),
-      ...chunks.map((c,i)=>setDoc(doc(db,'publicSnapshot','dictionary_'+i), {json:JSON.stringify(c), updatedAt:Date.now()})),
-      setDoc(doc(db,'publicSnapshot','dictionary_meta'), {chunkCount:chunks.length, updatedAt:Date.now()})
-    ]);
+    const listsDoc={json:listsPayload, updatedAt:v, v};
+    const chunkDocs=chunks.map(c=>({json:JSON.stringify(c), updatedAt:v, v}));
+    const metaDoc={chunkCount:chunks.length, updatedAt:v, v};
+    if(chunks.length<=8){
+      // One atomic commit: a visitor can never read the new meta next to old chunks
+      // (previously these were separate parallel writes, so a failure half-way
+      // left lists/chunks/meta from different generations).
+      const batch=writeBatch(db);
+      batch.set(doc(db,'publicSnapshot','lists'), listsDoc);
+      chunkDocs.forEach((d,i)=>batch.set(doc(db,'publicSnapshot','dictionary_'+i), d));
+      batch.set(doc(db,'publicSnapshot','dictionary_meta'), metaDoc);
+      await batch.commit();
+    } else {
+      // Very large dictionary: stay under the per-commit payload cap by writing the
+      // data first and the meta doc (the "pointer" visitors read first) LAST.
+      await setDoc(doc(db,'publicSnapshot','lists'), listsDoc);
+      for(let i=0;i<chunkDocs.length;i++) await setDoc(doc(db,'publicSnapshot','dictionary_'+i), chunkDocs[i]);
+      await setDoc(doc(db,'publicSnapshot','dictionary_meta'), metaDoc);
+    }
   }catch(err){
     console.error('regeneratePublicSnapshot failed — visitors will keep using the last good snapshot until a future save succeeds:', err);
   }
@@ -1551,26 +1622,40 @@ async function regeneratePublicSnapshot(){
 // Falls back to the expensive direct fetch ONLY if the snapshot doesn't
 // exist yet (brand-new deployment) or fails to parse — then immediately
 // tries to (re)build it so the next visitor gets the cheap path.
+async function loadSnapshotOnce(){
+  const metaSnap=await getDoc(doc(db,'publicSnapshot','dictionary_meta'));
+  if(!metaSnap.exists()) throw new Error('no snapshot yet');
+  const meta=metaSnap.data();
+  const chunkCount=meta.chunkCount||0;
+  const [listsSnap, ...dictSnaps]=await Promise.all([
+    getDoc(doc(db,'publicSnapshot','lists')),
+    ...Array.from({length:chunkCount},(_,i)=>getDoc(doc(db,'publicSnapshot','dictionary_'+i)))
+  ]);
+  if(!listsSnap.exists()) throw new Error('snapshot lists doc missing');
+  // Every doc must come from the same rebuild. A mismatch means we read in the middle of
+  // an admin save — retry shortly instead of showing a half-old/half-new dictionary.
+  if(meta.v!=null){
+    const all=[listsSnap, ...dictSnaps];
+    if(all.some(s=>!s.exists() || s.data().v!==meta.v)) throw new Error('snapshot-mismatch');
+  }
+  const lists=JSON.parse(listsSnap.data().json);
+  CATEGORIES=lists.categories||[]; TOPICS=lists.topics||[]; DIFFICULTIES=lists.difficulties||[];
+  SPECIAL_TAGS=lists.tags||[]; HANDSHAPES=lists.handshapes||[];
+  CUSTOM_FIELDS=lists.customFields||[]; CUSTOM_OPTIONS=lists.customFieldOptions||[];
+  WORDS=normalizeSigns(dictSnaps.flatMap(s=>s.exists()?JSON.parse(s.data().json):[]));
+  sortHandshapes();
+}
 async function loadAllPublic(){
   try{
-    const metaSnap=await getDoc(doc(db,'publicSnapshot','dictionary_meta'));
-    if(!metaSnap.exists()) throw new Error('no snapshot yet');
-    const chunkCount=metaSnap.data().chunkCount||0;
-    const [listsSnap, ...dictSnaps]=await Promise.all([
-      getDoc(doc(db,'publicSnapshot','lists')),
-      ...Array.from({length:chunkCount},(_,i)=>getDoc(doc(db,'publicSnapshot','dictionary_'+i)))
-    ]);
-    if(!listsSnap.exists()) throw new Error('snapshot lists doc missing');
-    const lists=JSON.parse(listsSnap.data().json);
-    CATEGORIES=lists.categories||[]; TOPICS=lists.topics||[]; DIFFICULTIES=lists.difficulties||[];
-    SPECIAL_TAGS=lists.tags||[]; HANDSHAPES=lists.handshapes||[];
-    CUSTOM_FIELDS=lists.customFields||[]; CUSTOM_OPTIONS=lists.customFieldOptions||[];
-    WORDS=dictSnaps.flatMap(s=>s.exists()?JSON.parse(s.data().json):[]);
-    sortHandshapes();
+    try{ await loadSnapshotOnce(); }
+    catch(e){
+      if(e && e.message==='snapshot-mismatch'){ await new Promise(r=>setTimeout(r,900)); await loadSnapshotOnce(); }
+      else throw e;
+    }
   }catch(err){
     console.warn('Public snapshot unavailable, falling back to direct read (this costs ~1 read per document, once):', err);
     await loadAll();
-    regeneratePublicSnapshot(); // best-effort: build it now so next time is cheap
+    regeneratePublicSnapshot(); // best-effort: build it now so next time is cheap (silently fails for non-admins)
   }
 }
 
@@ -1686,8 +1771,28 @@ window.handleElanFileSelected=function(){
   reader.readAsText(file);
 };
 
+// Two tokens are "the same recording" if their gloss + every annotation row match.
+// Used so re-uploading a file (or a Group file that overlaps an earlier one) does NOT
+// append every token a second time — the old merge simply concatenated, doubling the data
+// and breaking the "which recording is #N" index saved on each sign.
+function elanTokenSignature(tok){
+  const g=(tok&&tok.gloss)||{};
+  const rows=(tok&&tok.rows)||[];
+  return [g.begin_tc,g.end_tc,g.value].join('|')+'#'+rows.map(r=>[r.tag,r.begin_tc,r.end_tc,r.value].join('~')).join('^');
+}
+// Firestore doc IDs can't be empty, "." / "..", contain "/", match __.*__, or exceed 1500 bytes.
+// One such word used to make the whole 400-word batch throw and abort the upload.
+function isValidSignDataDocId(word){
+  if(!word || word==='.' || word==='..') return false;
+  if(word.includes('/')) return false;
+  if(/^__.*__$/.test(word)) return false;
+  return new TextEncoder().encode(word).length<=1500;
+}
+
 async function uploadParsedSignData(parsed, fileName){
-  const words=Object.keys(parsed);
+  const allWords=Object.keys(parsed);
+  const words=allWords.filter(isValidSignDataDocId);
+  const skippedWords=allWords.filter(w=>!isValidSignDataDocId(w));
   const progWrap=document.getElementById('elanUploadProgress');
   const progBar=document.getElementById('elanProgressBar');
   const progText=document.getElementById('elanProgressText');
@@ -1697,42 +1802,60 @@ async function uploadParsedSignData(parsed, fileName){
   progBar.style.width='0%'; progText.textContent=`Found ${words.length} words. Checking for existing data...`;
 
   try{
-    // Merge with whatever is already saved for each word (so re-uploading,
-    // or uploading a new Group that happens to share a word with an old one,
-    // adds to the existing tokens instead of erasing them).
     const BATCH_SIZE=400;
-    let done=0;
+    let done=0, addedTokens=0, dupTokens=0;
+    const tooBig=[];
     for(let i=0;i<words.length;i+=BATCH_SIZE){
       const chunk=words.slice(i,i+BATCH_SIZE);
-      const batch=writeBatch(db);
-      for(const word of chunk){
-        const ref=doc(db,'signData',word);
-        let existingTokens=[];
-        try{
-          const snap=await getDoc(ref);
-          if(snap.exists()) existingTokens=snap.data().tokens||[];
-        }catch(e){ /* doc just doesn't exist yet — fine */ }
-        const mergedTokens=[...existingTokens, ...parsed[word]];
-        batch.set(ref, {tokens:mergedTokens});
-        SIGN_DATA[word]=mergedTokens; // keep the in-memory copy in sync immediately
+      // Read the existing docs in parallel groups (was: one sequential await per word).
+      // A read ERROR must abort — the old code swallowed it and then overwrote the
+      // existing tokens with only the new ones, silently destroying saved data.
+      const existing={};
+      for(let j=0;j<chunk.length;j+=25){
+        await Promise.all(chunk.slice(j,j+25).map(async word=>{
+          const snap=await getDoc(doc(db,'signData',word));
+          existing[word]=snap.exists() ? (snap.data().tokens||[]) : [];
+        }));
       }
-      await batch.commit();
+      const batch=writeBatch(db);
+      let writes=0;
+      for(const word of chunk){
+        const seen=new Set(existing[word].map(elanTokenSignature));
+        const fresh=[];
+        parsed[word].forEach(t=>{
+          const sig=elanTokenSignature(t);
+          if(seen.has(sig)){ dupTokens++; return; }
+          seen.add(sig); fresh.push(t);
+        });
+        if(!fresh.length) continue;
+        const mergedTokens=[...existing[word], ...fresh];
+        if(new TextEncoder().encode(JSON.stringify(mergedTokens)).length>900000){ tooBig.push(word); continue; } // Firestore 1 MiB/doc limit
+        batch.set(doc(db,'signData',word), {tokens:mergedTokens});
+        SIGN_DATA[word]=mergedTokens; // keep the in-memory copy in sync immediately
+        addedTokens+=fresh.length; writes++;
+      }
+      if(writes) await batch.commit();
       done+=chunk.length;
-      const pct=Math.round((done/words.length)*100);
+      const pct=Math.round((done/Math.max(1,words.length))*100);
       progBar.style.width=pct+'%';
-      progText.textContent=`Uploaded ${done} / ${words.length} words...`;
+      progText.textContent=`Processed ${done} / ${words.length} words...`;
     }
-    progText.textContent=`Done — ${words.length} words uploaded.`;
+    progText.textContent=`Done — ${addedTokens} new token(s) added.`;
     resultEl.style.display='block';
-    resultEl.style.background='var(--accent-light)'; resultEl.style.color='var(--accent)';
-    resultEl.textContent=`✓ Success! Imported ${words.length} words from "${fileName}". They're now live on the site.`;
+    const notes=[];
+    if(dupTokens) notes.push(`${dupTokens} token(s) were already in the database and were skipped`);
+    if(skippedWords.length) notes.push(`${skippedWords.length} word(s) skipped because they can't be used as a document ID (e.g. contain "/"): ${skippedWords.slice(0,5).join(', ')}${skippedWords.length>5?'…':''}`);
+    if(tooBig.length) notes.push(`${tooBig.length} word(s) skipped because their data would exceed the 1 MiB document limit: ${tooBig.slice(0,5).join(', ')}`);
+    const warn=skippedWords.length||tooBig.length;
+    resultEl.style.background=warn?'var(--vhow-light)':'var(--accent-light)'; resultEl.style.color=warn?'var(--vhow)':'var(--accent)';
+    resultEl.textContent=`${warn?'⚠':'✓'} Imported "${fileName}": ${addedTokens} new token(s) across ${words.length} word(s).${notes.length?' '+notes.join('; ')+'.':''}`;
     nameEl.textContent='No file selected';
     document.getElementById('elanFileInput').value='';
   }catch(err){
     console.error(err);
     resultEl.style.display='block';
     resultEl.style.background='var(--vexample-light)'; resultEl.style.color='var(--vexample)';
-    resultEl.textContent=`⚠ Upload failed partway through: ${err.message}. You can try uploading the same file again — already-saved words won't be duplicated incorrectly, but please check the affected words in "View data" before re-trying if you're unsure.`;
+    resultEl.textContent=`⚠ Upload stopped: ${err.message}. Nothing from the failed batch was written. It is safe to upload the same file again — tokens that were already saved are detected and skipped.`;
   }
 }
 
@@ -1754,7 +1877,7 @@ function cleanForFirestore(obj){
   if(obj==null) return obj;
   try{ return JSON.parse(JSON.stringify(obj)); }catch(e){ return obj; }
 }
-async function createPendingReview(colName, docId, docLabel, action, snapshotBefore, snapshotAfter){
+async function createPendingReview(colName, docId, docLabel, action, snapshotBefore, snapshotAfter, isNew){
   snapshotBefore = cleanForFirestore(snapshotBefore);
   snapshotAfter = cleanForFirestore(snapshotAfter);
   const ref = await addDoc(collection(db,'pendingReviews'),{
@@ -1767,7 +1890,8 @@ async function createPendingReview(colName, docId, docLabel, action, snapshotBef
     editedByEmail: currentUser?.email || '',
     editedByName: adminName || currentUser?.email || '',
     ts: Date.now(),
-    status: 'pending'
+    status: 'pending',
+    isNew: !!isNew // true = the doc did not exist before this staff edit (rejecting must delete it)
   });
   return ref.id;
 }
@@ -1776,10 +1900,10 @@ async function createPendingReview(colName, docId, docLabel, action, snapshotBef
 // no review trail. Staff: writes straight through too (so guests see the
 // change immediately) but also files a pendingReview with the prior state,
 // and stamps the doc with _pendingReviewId so the UI can show "under review".
-async function submitEditWithReview(colName, docId, docLabel, beforeData, afterData){
+async function submitEditWithReview(colName, docId, docLabel, beforeData, afterData, opts={}){
   await setDoc(doc(db,colName,String(docId)), afterData, {merge:true});
   if(isMainAdmin) return null; // main admin edits are final, no review needed
-  const reviewId = await createPendingReview(colName, docId, docLabel, 'edit', beforeData, afterData);
+  const reviewId = await createPendingReview(colName, docId, docLabel, 'edit', beforeData, afterData, !!opts.isNew);
   await setDoc(doc(db,colName,String(docId)), {_pendingReviewId:reviewId}, {merge:true});
   return reviewId;
 }
@@ -1817,6 +1941,9 @@ async function loadPendingReviews(){
 // reader class (Main Admin), so a persistent listener costs at most a
 // handful of extra reads per staff edit/delete — nothing like the traffic-
 // multiplying cost a listener on a public, visitor-facing collection would have.
+// The "Refresh" button on the Pending Review tab calls this from an inline onclick, which only
+// sees window.* — without this line that button threw "loadPendingReviews is not defined".
+window.loadPendingReviews=loadPendingReviews;
 function subscribePendingReviews(){
   if(pendingReviewsUnsub) return; // already subscribed, avoid double-listening
   // No orderBy here: where(status)+orderBy(ts) needs a composite index, and
@@ -1854,6 +1981,9 @@ window.approveReview=async function(reviewId){
   try{
     if(r.action==='delete'){
       await deleteDoc(doc(db,r.collection,r.docId));
+      // Now that the delete is final, strip the removed category/tag/option/handshape
+      // from the signs that still reference it.
+      await cleanupSignsAfterApprovedDelete(r);
       // About-Us custom sub-pages also need their registry entry and
       // order slot removed — a plain deleteDoc on siteContent/{fsKey}
       // alone would leave a dangling, now-broken tab in aboutExtraPages.
@@ -1880,7 +2010,12 @@ window.rejectReview=async function(reviewId){
       // Clear the "pending removal" flag on the About-Us tab so it's a
       // normal tab again instead of staying stuck in limbo.
       if(r.collection==='siteContent'){ await clearAboutPagePendingDelete(r.docId); }
+    }else if(r.isNew){
+      // A staff-CREATED doc: there is no earlier state to restore. Writing {id} back (the old
+      // behaviour) left an empty shell sign with no name that crashed search + the admin table.
+      await deleteDoc(doc(db,r.collection,r.docId));
     }else{
+      await revertSignValuesAfterRejectedRename(r);
       const restored={...r.snapshotBefore, _pendingReviewId:null};
       await setDoc(doc(db,r.collection,r.docId), restored);
     }
@@ -2021,6 +2156,11 @@ window.toggleIgnoreContact=async function(id){
 
 // Renders a readable summary of what changed for an "edit" review:
 // only the fields that actually differ between before/after.
+// Arrays/objects (e.g. vid_how) used to print as "[object Object]".
+function fmtDiffVal(v){
+  if(v===undefined || v===null || v==='') return '—';
+  return (typeof v==='object') ? JSON.stringify(v) : String(v);
+}
 function diffSummary(before, after){
   const skip=new Set(['id','_pendingReviewId','_hidden']);
   const keys=new Set([...Object.keys(before||{}), ...Object.keys(after||{})]);
@@ -2029,7 +2169,7 @@ function diffSummary(before, after){
     if(skip.has(k)) return;
     const bv=JSON.stringify(before?.[k]??'');
     const av=JSON.stringify(after?.[k]??'');
-    if(bv!==av) rows.push(`<div class="diff-row"><span class="diff-field">${esc(k)}</span><span class="diff-before">${esc(before?.[k]??'—')}</span><i class="ti ti-arrow-right"></i><span class="diff-after">${esc(after?.[k]??'—')}</span></div>`);
+    if(bv!==av) rows.push(`<div class="diff-row"><span class="diff-field">${esc(k)}</span><span class="diff-before">${esc(fmtDiffVal(before?.[k]))}</span><i class="ti ti-arrow-right"></i><span class="diff-after">${esc(fmtDiffVal(after?.[k]))}</span></div>`);
   });
   return rows.length ? rows.join('') : '<p style="font-size:12px;color:var(--text3);">No visible field differences.</p>';
 }
@@ -2192,8 +2332,6 @@ async function addValue(colName, value, extra={}){
   finally{ showSaving(false); }
 }
 
-// data = partial fields being changed (e.g. {value:'X'} or {image:b64}).
-// label = human-readable name shown in the Pending Review queue.
 // Keeps the in-memory globals (WORDS/CATEGORIES/etc) correct immediately
 // after a write, WITHOUT a network refetch, so regeneratePublicSnapshot()
 // (called right after these) always serializes the up-to-date state.
@@ -2223,17 +2361,97 @@ function patchGlobalAfterDelete(colName, id){
   else if(colName==='customFieldOptions') CUSTOM_OPTIONS=drop(CUSTOM_OPTIONS);
 }
 
+
+// Signs store category/topic/difficulty/tag/handshape/custom-option values as plain STRINGS.
+// So renaming or deleting a value must also rewrite the sign docs that use it — before this,
+// only the in-memory copy was patched, and the next reload (or any later snapshot rebuild)
+// brought the old value back on the signs while the option list had the new name.
+const SIGN_FIELD_FOR_VALUE_COL={categories:'cat', topics:'topic', difficulties:'diff', tags:'special', handshapes:'hand'};
+function signFieldForValueDoc(colName, data){
+  if(SIGN_FIELD_FOR_VALUE_COL[colName]) return SIGN_FIELD_FOR_VALUE_COL[colName];
+  if(colName==='customFieldOptions' && data && data.fieldId) return 'cf_'+data.fieldId;
+  return null;
+}
+function remapSignValue(v, oldVal, newVal){
+  if(Array.isArray(v)) return newVal==null ? v.filter(x=>x!==oldVal) : [...new Set(v.map(x=>x===oldVal?newVal:x))];
+  return newVal==null ? '' : newVal;
+}
+// newVal === null  → remove oldVal from every sign; otherwise rename oldVal → newVal.
+async function propagateValueToSigns(colName, data, oldVal, newVal){
+  const field=signFieldForValueDoc(colName, data);
+  if(!field || oldVal==null || oldVal==='') return 0;
+  let touched=0;
+  try{
+    // Query Firestore (not the in-memory list) so a stale admin session can't miss signs.
+    const [arrSnap, eqSnap]=await Promise.all([
+      getDocs(query(collection(db,'signs'), where(field,'array-contains',oldVal))),
+      getDocs(query(collection(db,'signs'), where(field,'==',oldVal)))
+    ]);
+    const ops=[];
+    arrSnap.docs.forEach(d=>{ const v=d.data()[field]; if(Array.isArray(v)) ops.push({id:d.id, nv:remapSignValue(v,oldVal,newVal)}); });
+    eqSnap.docs.forEach(d=>ops.push({id:d.id, nv:remapSignValue('',oldVal,newVal)}));
+    for(let i=0;i<ops.length;i+=400){
+      const batch=writeBatch(db);
+      ops.slice(i,i+400).forEach(o=>batch.set(doc(db,'signs',o.id), {[field]:o.nv}, {merge:true}));
+      await batch.commit();
+    }
+    touched=ops.length;
+  }catch(err){
+    console.error('propagateValueToSigns failed:', err);
+    showToast('⚠ The list was updated, but updating the signs that use it failed. Please try again.');
+    return -1;
+  }
+  WORDS.forEach(w=>{
+    const v=w[field];
+    if(Array.isArray(v)){ if(v.includes(oldVal)) w[field]=remapSignValue(v,oldVal,newVal); }
+    else if(v===oldVal) w[field]=remapSignValue('',oldVal,newVal);
+  });
+  regeneratePublicSnapshot();
+  return touched;
+}
+// Removes a whole custom field (cf_<id>) from every sign that carries it.
+async function purgeFieldFromSigns(fieldKey){
+  const hits=WORDS.filter(w=>Object.prototype.hasOwnProperty.call(w,fieldKey));
+  try{
+    for(let i=0;i<hits.length;i+=400){
+      const batch=writeBatch(db);
+      hits.slice(i,i+400).forEach(w=>batch.set(doc(db,'signs',String(w.id)), {[fieldKey]:deleteField()}, {merge:true}));
+      await batch.commit();
+    }
+  }catch(err){ console.error('purgeFieldFromSigns failed:', err); return -1; }
+  hits.forEach(w=>{ delete w[fieldKey]; });
+  if(hits.length) regeneratePublicSnapshot();
+  return hits.length;
+}
+async function cleanupSignsAfterApprovedDelete(r){
+  const d=r.snapshotBefore||{};
+  if(r.collection==='customFields') return purgeFieldFromSigns('cf_'+r.docId);
+  if(SIGN_FIELD_FOR_VALUE_COL[r.collection] || r.collection==='customFieldOptions') return propagateValueToSigns(r.collection, d, d.value, null);
+}
+// A staff rename wrote the new name onto the signs immediately; if Main Admin rejects it,
+// the option goes back to its old name, so the signs must follow.
+async function revertSignValuesAfterRejectedRename(r){
+  const b=r.snapshotBefore||{}, a=r.snapshotAfter||{};
+  if(!(SIGN_FIELD_FOR_VALUE_COL[r.collection] || r.collection==='customFieldOptions')) return;
+  if(b.value==null || a.value==null || b.value===a.value) return;
+  await propagateValueToSigns(r.collection, b, a.value, b.value);
+}
+
+// data = partial fields being changed (e.g. {value:'X'} or {image:b64}).
+// Returns true on success / false on failure so callers don't announce "Renamed"/"Deleted"
+// (and patch their own state) after a failed write.
 async function updateValueDoc(colName, id, data, label){
   showSaving(true);
   try{
     const snap = await getDoc(doc(db,colName,id));
     const before = snap.exists() ? {id, ...snap.data()} : {id};
     const after = {...before, ...data};
-    await submitEditWithReview(colName, id, label||before.value, before, after);
+    await submitEditWithReview(colName, id, label||before.value, before, after, {isNew:!snap.exists()});
     patchGlobalAfterSave(colName, id, after);
     regeneratePublicSnapshot();
+    return true;
   }
-  catch(err){ console.error(err); showToast('⚠ Could not save. Try again.'); }
+  catch(err){ console.error(err); showToast('⚠ Could not save. Try again.'); return false; }
   finally{ showSaving(false); }
 }
 
@@ -2245,16 +2463,18 @@ async function deleteValueDoc(colName, id, label){
     await submitDeleteWithReview(colName, id, label||fullData.value, fullData);
     patchGlobalAfterDelete(colName, id);
     regeneratePublicSnapshot();
+    return true;
   }
-  catch(err){ console.error(err); showToast('⚠ Could not delete. Try again.'); }
+  catch(err){ console.error(err); showToast('⚠ Could not delete. Try again.'); return false; }
   finally{ showSaving(false); }
 }
 
 async function saveWord(w){
   showSaving(true);
   try{
-    const before = WORDS.find(x=>String(x.id)===String(w.id)) || {id:w.id};
-    await submitEditWithReview('signs', w.id, w.en||before.en, before, w);
+    const existing = WORDS.find(x=>String(x.id)===String(w.id));
+    const before = existing || {id:w.id};
+    await submitEditWithReview('signs', w.id, w.en||before.en, before, w, {isNew:!existing});
     patchGlobalAfterSave('signs', w.id, w);
     regeneratePublicSnapshot();
   }
@@ -2300,6 +2520,7 @@ async function loadUserPrefs(){
 
 async function saveUserPrefs(nickname, anonymous){
   if(!currentUser) return;
+  nickname=String(nickname||'').slice(0,50); // firestore.rules rejects nicknames over 50 chars
   userPrefs = {nickname, anonymous};
   try{ await setDoc(doc(db,'users',currentUser.uid),{nickname,anonymous},{merge:true}); }
   catch(err){ console.error('saveUserPrefs failed:',err); }
@@ -2363,18 +2584,22 @@ let ABOUT_SUB_CONTENT={}; // key → {title, body (HTML string)}
 ABOUT_SUB_DEFS.forEach(d=>{ ABOUT_SUB_CONTENT[d.key]={title:d.defaultTitle, body:d.defaultBody}; });
 
 async function loadAboutSubContent(){
-  for(const d of ABOUT_SUB_DEFS){
+  await Promise.all(ABOUT_SUB_DEFS.map(async d=>{
     try{
       const snap=await getDoc(doc(db,'siteContent',d.fsKey));
       if(snap.exists()){
         const data=snap.data();
         if(data.title) ABOUT_SUB_CONTENT[d.key].title=data.title;
         if(data.body)  ABOUT_SUB_CONTENT[d.key].body=data.body;
+        if(data.label) d.label=data.label; // admin-renamed tab label
       }
     }catch(err){ console.error('loadAboutSubContent failed for '+d.key,err); }
-  }
-  await loadAboutExtraPages();
-  await loadAboutTabOrder();
+  }));
+  try{
+    const cs=await getDoc(doc(db,'siteContent','aboutContact'));
+    if(cs.exists() && cs.data().label) CONTACT_TAB_LABEL=cs.data().label;
+  }catch(err){ console.error('load contact tab label failed:',err); }
+  await Promise.all([loadAboutExtraPages(), loadAboutTabOrder()]);
 }
 
 // Custom "+ New page" sub-pages previously lived ONLY in the in-memory
@@ -2424,10 +2649,11 @@ let ABOUT_EXTRA_DEFS=[];
 // anywhere relative to any other.
 let ABOUT_TAB_ORDER=['mission','conditions','privacy','contact_sub'];
 
+let CONTACT_TAB_LABEL='Contact';
 function allAboutDefsUnordered(){
   return [
     ...ABOUT_SUB_DEFS,
-    {key:'contact_sub', fsKey:'aboutContact', label:'Contact', defaultTitle:'Contact', defaultBody:'', _isContactSub:true},
+    {key:'contact_sub', fsKey:'aboutContact', label:CONTACT_TAB_LABEL, defaultTitle:'Contact', defaultBody:'', _isContactSub:true},
     ...ABOUT_EXTRA_DEFS
   ];
 }
@@ -2540,6 +2766,7 @@ function renderContactSubPanelHtml(){
       `</div>`,
       `<div id="contactBodyView" style="color:var(--text2);line-height:1.7;white-space:pre-wrap;">Have a question about SignBiz? Fill in the form below and we will get back to you.</div>`,
       `<div id="contactEditForm" style="display:none;margin-top:12px;">`,
+        `<div class="form-field"><label>Page label (shown on tab)</label><input type="text" id="contactLabelInput" maxlength="40"/></div>`,
         `<div class="form-field"><label>Title</label><input type="text" id="contactTitleInput"/></div>`,
         `<div class="form-field"><label>Body</label><textarea id="contactBodyInput" style="min-height:100px;"></textarea></div>`,
         `<div class="form-footer" style="margin-top:6px;"><button class="btn" onclick="cancelContactEdit()">Cancel</button><button class="btn btn-primary" onclick="saveContactContent()">Save</button></div>`,
@@ -2583,7 +2810,9 @@ window.confirmAddAboutTab=async function(){
   const label=document.getElementById('newAboutTabLabel').value.trim();
   if(!label){ showToast('Please enter a tab label.'); return; }
   const title=document.getElementById('newAboutTabTitle').value.trim()||label;
-  const key='custom_'+label.toLowerCase().replace(/[^a-z0-9]+/g,'_').replace(/^_|_$/g,'');
+  // Non-English labels (e.g. Chinese) strip down to an empty slug, which made every such page collide on the same key — fall back to a unique id.
+  const slug=label.toLowerCase().replace(/[^a-z0-9]+/g,'_').replace(/^_|_$/g,'')||('p'+Date.now().toString(36));
+  const key='custom_'+slug;
   const fsKey='aboutCustom_'+key;
   if(ABOUT_EXTRA_DEFS.some(d=>d.key===key)){ showToast('A tab with that name already exists.'); return; }
   const newDef={key, fsKey, label, defaultTitle:title, defaultBody:'<p>Write content here.</p>'};
@@ -2633,11 +2862,12 @@ function renderAboutSubPanel(sub){
       </div>
       <div id="asBodyView_${sub}" class="aboutus-content-view">${sanitizeRichHtml(content.body)}</div>
       <div id="asEditForm_${sub}" style="display:none;margin-top:16px;">
+        <div class="form-field"><label>Page label (shown on tab)</label><input type="text" id="asLabelInput_${sub}" maxlength="40" value="${esc(def.label)}"/></div>
         <div class="form-field"><label>Page title</label><input type="text" id="asTitleInput_${sub}" value="${esc(content.title)}"/></div>
         <div style="margin-bottom:14px;">
           <label style="font-size:12px;color:var(--text2);display:block;margin-bottom:5px;font-weight:500;">Body</label>
           ${buildRteToolbar(sub)}
-          <div id="asRteBody_${sub}" class="rte-editor" contenteditable="true" spellcheck="true">${content.body}</div>
+          <div id="asRteBody_${sub}" class="rte-editor" contenteditable="true" spellcheck="true">${sanitizeRichHtml(content.body)}</div>
         </div>
         <div class="form-footer" style="margin-top:6px;">
           <button class="btn" onclick="cancelAboutSubEdit(${jsStr(sub)})">Cancel</button>
@@ -2806,6 +3036,7 @@ window.enterAboutSubEdit=function(sub){
   const ed=document.getElementById('asRteBody_'+sub);
   if(ed) ed.innerHTML=sanitizeRichHtml(ABOUT_SUB_CONTENT[sub].body);
   document.getElementById('asTitleInput_'+sub).value=ABOUT_SUB_CONTENT[sub].title;
+  const lblIn=document.getElementById('asLabelInput_'+sub); const curDef=allAboutDefs().find(d=>d.key===sub); if(lblIn&&curDef) lblIn.value=curDef.label;
   document.getElementById('asBodyView_'+sub).style.display='none';
   document.getElementById('asTitleView_'+sub).style.display='none';
   document.getElementById('asEditBtn_'+sub).style.display='none';
@@ -2827,17 +3058,24 @@ window.saveAboutSub=async function(sub){
   // write, no toast, no error. Using allAboutDefs() covers both.
   const def=allAboutDefs().find(d=>d.key===sub); if(!def) return;
   const title=document.getElementById('asTitleInput_'+sub).value.trim()||def.defaultTitle;
+  const label=(document.getElementById('asLabelInput_'+sub)?.value||'').trim()||def.label;
   const body=sanitizeRichHtml(document.getElementById('asRteBody_'+sub).innerHTML);
+  // Firestore documents max out at 1 MiB; embedded base64 images are the usual culprit.
+  if(new Blob([title+body]).size>950000){ showToast('⚠ This page is too large to save (images count). Remove or shrink an image.'); return; }
   showSaving(true);
   try{
-    await setDoc(doc(db,'siteContent',def.fsKey),{title,body},{merge:true});
+    await setDoc(doc(db,'siteContent',def.fsKey),{title,body,label},{merge:true});
+    const labelChanged=label!==def.label;
+    def.label=label; // built-in and custom defs are live objects, so this updates the tab + dropdown
+    if(labelChanged && ABOUT_EXTRA_DEFS.some(d=>d.key===sub)) await saveAboutExtraPagesRegistry();
     ABOUT_SUB_CONTENT[sub]={title,body};
     document.getElementById('asTitleView_'+sub).textContent=title;
     document.getElementById('asBodyView_'+sub).innerHTML=body;
     cancelAboutSubEdit(sub);
     renderAboutTabBar();
+    renderHeaderNav();
     showToast('Saved');
-  }catch(err){ console.error(err); showToast('⚠ Could not save. Try again.'); }
+  }catch(err){ console.error(err); showToast('⚠ Could not save ('+(err&&err.code?err.code:'error')+'). Are you signed in with a verified admin email?'); }
   finally{ showSaving(false); }
 };
 
@@ -2950,10 +3188,19 @@ async function loadFeedbackForSign(signId){
 }
 
 /* ══ AUTH ══ */
+const AUTH_ERROR_TEXT={
+  'auth/invalid-credential':'Incorrect email or password.',
+  'auth/wrong-password':'Incorrect email or password.',
+  'auth/user-not-found':'Incorrect email or password.',
+  'auth/invalid-email':'Please enter a valid email address.',
+  'auth/missing-password':'Please enter your password.',
+  'auth/too-many-requests':'Too many attempts. Please wait a few minutes and try again.',
+  'auth/network-request-failed':'Network error. Check your connection and try again.'
+};
 window.loginEmail_pw=async function(){
   const e=document.getElementById('loginEmail').value.trim(), p=document.getElementById('loginPassword').value;
   const err=document.getElementById('loginError'); err.style.display='none';
-  try{ await signInWithEmailAndPassword(auth,e,p); } catch(ex){ err.textContent=ex.message; err.style.display='block'; }
+  try{ await signInWithEmailAndPassword(auth,e,p); } catch(ex){ err.textContent=AUTH_ERROR_TEXT[ex&&ex.code]||'Could not sign in. Please try again.'; err.style.display='block'; }
 };
 window.loginGoogle=async function(){ try{ await signInWithPopup(auth,gp); }catch(ex){ showToast('Google error: '+ex.message); } };
 window.cancelLogin=function(){ showPage('dict'); };
@@ -2994,10 +3241,17 @@ async function checkAdminDoc(user){
   }catch(err){ console.error('Admin check failed:',err); return null; }
 }
 
+// onAuthStateChanged can fire again (token refresh, quick sign-out/in) while an earlier run is
+// still awaiting Firestore; without a sequence check the OLDER run could finish last and
+// overwrite the newer user's role flags.
+let authSeq=0;
 onAuthStateChanged(auth, async user=>{
+  const mySeq=++authSeq;
   await waitForAppCheckReady();
+  if(mySeq!==authSeq) return;
   currentUser=user;
   const adminData = user ? await checkAdminDoc(user) : null;
+  if(mySeq!==authSeq) return;
   isAdmin = !!adminData && (adminData.role==='main' || adminData.role==='staff');
   isMainAdmin = !!adminData && adminData.role==='main';
   isResearcher = !!adminData && adminData.role==='researcher';
@@ -3009,7 +3263,9 @@ onAuthStateChanged(auth, async user=>{
   // (edit-form auto-fill, the "View Data" modal, the ELAN import tab) is
   // already gated behind anyway.
   if(isAdmin || isResearcher){
-    SIGN_DATA = await loadSignData();
+    const sd = await loadSignData();
+    if(mySeq!==authSeq) return;
+    SIGN_DATA = sd;
   } else {
     SIGN_DATA = {};
   }
@@ -3024,6 +3280,18 @@ onAuthStateChanged(auth, async user=>{
     ignoredContactIds: adminData?.ignoredContactIds || []
   };
   await loadUserPrefs();
+  if(mySeq!==authSeq) return;
+  if(!isAdmin){
+    // Signed out (or a non-admin signed in): drop anything an admin session loaded —
+    // private feedback comments and contact-form messages (names/emails) — from memory AND the DOM.
+    FEEDBACKS=[]; CONTACTS=[]; feedbackBySign={};
+    ['fbAdminList','contactAdminList'].forEach(id=>{ const el=document.getElementById(id); if(el) el.innerHTML=''; });
+  }
+  if(user && !adminData && !user.emailVerified && user.providerData.some(p=>p.providerId==='password')){
+    // firestore.rules require a VERIFIED email for admin/researcher access, so an unverified
+    // password account silently looked like a normal visitor before.
+    showToast('Your email address is not verified yet — verify it to use admin or researcher features.');
+  }
   const uEl=document.getElementById('headerUser'), aBtn=document.getElementById('adminNavBtn'),
         lBtn=document.getElementById('loginNavBtn'), oBtn=document.getElementById('logoutBtn'),
         rBtn=document.getElementById('rebuildSnapshotBtn');
@@ -3180,6 +3448,7 @@ function applySearchLangText(){
   const m=document.getElementById('mobileGlobalSearch'); if(m) m.placeholder=t.placeholder;
 }
 
+function esNoticeAcked(){ try{ return localStorage.getItem('signbiz_es_notice_ack')==='1'; }catch(e){ return false; } }
 window.setLang=function(lang){
   const wasEn = currentLang==='en';
   currentLang=lang;
@@ -3193,7 +3462,7 @@ window.setLang=function(lang){
   // English speakers are the default audience and don't need the notice.
   // Re-switching es→es (clicking ES again while already on ES) also
   // doesn't re-trigger it; only a fresh en→es transition does.
-  if(lang==='es' && wasEn && localStorage.getItem('signbiz_es_notice_ack')!=='1'){
+  if(lang==='es' && wasEn && !esNoticeAcked()){
     showEsNotice();
   } else if(lang==='en'){
     hideEsNotice();
@@ -3210,7 +3479,7 @@ window.hideEsNotice=function(){
   document.getElementById('esNoticePop')?.classList.remove('show');
 };
 window.ackEsNotice=function(){
-  localStorage.setItem('signbiz_es_notice_ack','1');
+  try{ localStorage.setItem('signbiz_es_notice_ack','1'); }catch(e){ /* storage blocked (private mode) — just close it */ }
   hideEsNotice();
 };
 // Clicking anywhere outside the popover (and outside the language
@@ -3501,6 +3770,7 @@ window.renderCategoryOptionsPage=function(fieldId){
 
   document.getElementById('catOptHeroTitle').textContent=cf.heroTitle||cf.name;
   document.getElementById('catOptHeroBody').textContent=cf.heroBody||'';
+  const crEl=document.getElementById('catOptHeroCredit'); if(crEl) crEl.textContent=cf.heroCredit||'';
 
   // Real filtering, not just fading: an option with zero tagged words, or
   // one a staff/admin turned off (showOnLanding===false), doesn't render
@@ -3781,6 +4051,7 @@ window.enterCatOptHeroEdit=function(){
   const cf=CUSTOM_FIELDS.find(f=>f.id===activeCatOptFieldId); if(!cf) return;
   document.getElementById('catOptHeroTitleInput').value=cf.heroTitle||cf.name;
   document.getElementById('catOptHeroBodyInput').value=cf.heroBody||'';
+  document.getElementById('catOptHeroCreditInput').value=cf.heroCredit||'';
   document.getElementById('catOptHeroView').style.display='none';
   document.getElementById('catOptHeroEditBtn').style.display='none';
   document.getElementById('catOptHeroForm').style.display='block';
@@ -3794,13 +4065,30 @@ window.saveCatOptHeroContent=async function(){
   const cf=CUSTOM_FIELDS.find(f=>f.id===activeCatOptFieldId); if(!cf) return;
   const title=document.getElementById('catOptHeroTitleInput').value.trim()||cf.name;
   const body=document.getElementById('catOptHeroBodyInput').value.trim();
+  const credit=document.getElementById('catOptHeroCreditInput').value.trim();
+  // The title is also the category's real name, so the top nav, the Topics
+  // card and the "Back to ..." buttons all change together with the heading.
+  if(title.toLowerCase()!==cf.name.toLowerCase() && CUSTOM_FIELDS.some(f=>f.id!==cf.id && f.name.toLowerCase()===title.toLowerCase())){
+    showToast('A category with that name already exists.'); return;
+  }
+  const updates={name:title,heroTitle:title,heroBody:body,heroCredit:credit};
   showSaving(true);
-  try{ await setDoc(doc(db,'customFields',cf.id),{heroTitle:title,heroBody:body},{merge:true}); }
-  catch(err){ console.error('saveCatOptHeroContent failed:',err); showToast('⚠ Could not save. Try again.'); showSaving(false); return; }
+  try{ await setDoc(doc(db,'customFields',cf.id),updates,{merge:true}); }
+  catch(err){
+    console.error('saveCatOptHeroContent failed:',err);
+    showToast('⚠ Could not save ('+(err&&err.code?err.code:'error')+'). Are you signed in with a verified admin email?');
+    showSaving(false); return;
+  }
   showSaving(false);
-  cf.heroTitle=title; cf.heroBody=body;
+  Object.assign(cf,updates);
+  patchGlobalAfterSave('customFields',cf.id,cf);
+  // Visitors read publicSnapshot, not the live collections — without this the
+  // edit looks saved for the admin but visitors (and a refresh) get the old text.
+  regeneratePublicSnapshot();
   cancelCatOptHeroEdit();
   renderCategoryOptionsPage(cf.id);
+  if(typeof renderHeaderNav==='function') renderHeaderNav();
+  if(typeof rerenderActiveLandingSurface==='function') rerenderActiveLandingSurface();
   showToast('Category page header updated');
 };
 
@@ -4044,7 +4332,7 @@ window.toggleCategoryInNav=async function(fieldId,showOn){
       const reviewId=await createPendingReview('customFields', fieldId, item.name, 'edit', before, {...item, showInNav:false});
       await setDoc(doc(db,'customFields',fieldId), {_pendingReviewId:reviewId}, {merge:true});
       item._pendingReviewId=reviewId;
-    }catch(err){ console.error(err); showToast('⚠ Could not save. Try again.'); }
+    }catch(err){ console.error(err); showToast('⚠ Could not save. Try again.'); return; }
     showToast('Removed from nav — sent to Main Admin for review');
   }
 };
@@ -4057,10 +4345,13 @@ window.removeNavItem=async function(fieldId){
 
 /* ══ SEARCH AUTOCOMPLETE ══ */
 let acFocusIndex=-1;
+// Accent/case-insensitive comparison key ("senal" finds "señal"). Folds per character so the
+// string length never changes and highlightMatch() can keep using index positions.
+function foldText(s){ return Array.from(String(s??'')).map(c=>c.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase()).join(''); }
 function buildAcItems(q){
   if(!q || q.length<1) return [];
-  const ql=q.toLowerCase();
-  return visibleWords().filter(w=>w.en.toLowerCase().includes(ql)||(w.es||'').toLowerCase().includes(ql))
+  const ql=foldText(q);
+  return visibleWords().filter(w=>foldText(w.en).includes(ql)||foldText(w.es).includes(ql))
     .slice(0,10)
     .map(w=>{
       const showEs=currentLang==='es'&&w.es;
@@ -4069,7 +4360,7 @@ function buildAcItems(q){
 }
 function highlightMatch(text,q){
   if(!q) return esc(text);
-  const idx=text.toLowerCase().indexOf(q.toLowerCase());
+  const idx=foldText(text).indexOf(foldText(q));
   if(idx===-1) return esc(text);
   return esc(text.slice(0,idx))+'<em>'+esc(text.slice(idx,idx+q.length))+'</em>'+esc(text.slice(idx+q.length));
 }
@@ -4140,10 +4431,10 @@ const WORD_LIST_PAGE_SIZE=50;
 // that have zero signs in that context, instead of every letter always
 // looking available regardless of what's actually in the current Topic.
 function wordMatchesFilters(w, opts={}){
-  const q=(document.getElementById('globalSearch').value||'').trim().toLowerCase();
+  const q=foldText((document.getElementById('globalSearch').value||'').trim());
   const fHand=document.getElementById('fHand')?.value||'';
   const fVid=document.getElementById('fVid')?.value||'';
-  if(q && !w.en.toLowerCase().includes(q) && !(w.es||'').toLowerCase().includes(q)) return false;
+  if(q && !foldText(w.en).includes(q) && !foldText(w.es).includes(q)) return false;
   const hands=Array.isArray(w.hand)?w.hand:(w.hand?[w.hand]:[]);
   if(!opts.skipAZ && activeAZ && !hands.includes(activeAZ)) return false;
   if(fHand && !hands.includes(fHand)) return false;
@@ -4433,7 +4724,9 @@ function renderFeedbackSection(w){
   // visible to everyone; admins also see private ones, clearly marked.
   // (The comments query already applies the isPublic filter server-side for
   // non-admins, so this is just separating comments from rating docs.)
-  const visibleComments = list.filter(f=>f._kind==='comment');
+  // Defence in depth: after an admin signs out in the same tab, feedbackBySign may still hold
+  // PRIVATE comments loaded under the admin session — never render those for non-admins.
+  const visibleComments = list.filter(f=>f._kind==='comment' && (isAdmin || f.isPublic===true));
   const commentsHtml = visibleComments.map(f=>{
     const stars = f.rating ? `<span class="fb-comment-stars">${'★'.repeat(f.rating)}${'☆'.repeat(5-f.rating)}</span>` : '';
     const date = f.ts ? new Date(f.ts).toLocaleDateString() : '';
@@ -4464,7 +4757,7 @@ function renderFeedbackSection(w){
   const prefAnon = !!userPrefs?.anonymous;
   const commentBox = isLoggedIn
     ? `<div class="fb-name-row">
-         <input type="text" class="fb-name-input" id="fbNick_${w.id}" placeholder="Your display name" value="${prefAnon?'':esc(prefNick)}" ${prefAnon?'disabled':''} oninput="onNickInput(${jsStr(w.id)})"/>
+         <input type="text" class="fb-name-input" id="fbNick_${w.id}" maxlength="50" placeholder="Your display name" value="${prefAnon?'':esc(prefNick)}" ${prefAnon?'disabled':''} oninput="onNickInput(${jsStr(w.id)})"/>
          <label class="fb-anon-toggle">
            <input type="checkbox" id="fbAnon_${w.id}" ${prefAnon?'checked':''} onchange="onAnonToggle(${jsStr(w.id)})"/>
            <span>Post anonymously<span class="fb-anon-preview" id="fbAnonPreview_${w.id}">${prefAnon?` (shown as ${anonLabelFor(currentUser.uid)})`:''}</span></span>
@@ -4474,7 +4767,7 @@ function renderFeedbackSection(w){
          ${[1,2,3,4,5].map(n=>`<span class="star" onclick="setFbRating(${n},${jsStr(w.id)})" onmouseover="hoverStars(${n},${jsStr(w.id)})" onmouseout="resetStarHover(${jsStr(w.id)})">★</span>`).join('')}
        </div>
        <div class="fb-type-row">${['Bug','Suggestion','Other'].map(t=>`<span class="fb-type" onclick="setFbType(${jsStr(t)},${jsStr(w.id)})">${t}</span>`).join('')}</div>
-       <textarea class="fb-textarea" id="fbText_${w.id}" placeholder="Your feedback (optional)..."></textarea>
+       <textarea class="fb-textarea" id="fbText_${w.id}" maxlength="2000" placeholder="Your feedback (optional)..."></textarea>
        <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
          <button class="fb-submit" onclick="submitFeedback(${jsStr(w.id)})">Send feedback</button>
          <span class="fb-success" id="fbSuccess_${w.id}"><i class="ti ti-circle-check"></i> Thank you!</span>
@@ -4642,26 +4935,33 @@ window.submitFeedback=async function(wId){
   if(!currentUser){ showToast('Please sign in with Google to comment.'); return; }
   const text=document.getElementById(`fbText_${wId}`)?.value.trim()||'';
   if(!fbRating&&!text){ showToast('Please add a rating or comment.'); return; }
+  if(!text && fbRating && hasRatedBefore(wId)){ showToast('You already rated this sign on this device.'); return; }
   const w=WORDS.find(x=>x.id===wId);
-  const displayName=resolveDisplayName();
+  const displayName=resolveDisplayName().slice(0,100); // firestore.rules: displayName <= 100 chars
   const ts=Date.now();
   try{
-    const writes=[];
-    // A star rating always goes to the dedicated (public, average-only) collection,
-    // whether or not it's paired with a comment.
-    if(fbRating) writes.push(addDoc(collection(db,'feedback'),{ signId:wId, rating:fbRating, ts }));
     // Written feedback goes to the private-by-default comments collection. The rating
     // is duplicated here too (display-only, next to the comment) — it is NOT re-counted
-    // toward the average; that only ever comes from the doc above.
-    if(text) writes.push(addDoc(collection(db,'feedbackComments'),{
-      signId:wId, signName:w?.en||'',
+    // toward the average; that only ever comes from the dedicated rating doc below.
+    // Writes are now SEQUENTIAL (comment first). They used to run in parallel, so if the
+    // comment failed after the rating had already been saved, the retry added the rating
+    // a second time and double-counted it in the average.
+    if(text) await addDoc(collection(db,'feedbackComments'),{
+      signId:wId, signName:(w?.en||'').slice(0,300),
       rating:fbRating, type:fbType||'Other', text,
       displayName, // chosen nickname or Anonymous_#### — email intentionally NOT stored
       isPublic:false, // private by default; admin can make public
       teamReply:'',
       ts
-    }));
-    await Promise.all(writes);
+    });
+    // A star rating always goes to the dedicated (public, average-only) collection, once per
+    // device per sign (signed-in users could previously re-rate the same sign endlessly).
+    if(fbRating && !hasRatedBefore(wId)){
+      try{
+        await addDoc(collection(db,'feedback'),{ signId:wId, rating:fbRating, ts });
+        markRated(wId);
+      }catch(e){ if(!text) throw e; console.error('Rating write failed (comment was saved):', e); }
+    }
   }catch(err){
     console.error('Feedback submit failed:',err);
     showToast('⚠ Could not send feedback — please try again later.');
@@ -4765,11 +5065,11 @@ function renderAdminTable(){
     const cats=Array.isArray(w.cat)?w.cat:(w.cat?[w.cat]:[]);
     const cc=cats[0]?colorFor(cats[0]):CAT_C._default;
     const hands=Array.isArray(w.hand)?w.hand:(w.hand?[w.hand]:[]);
-    const dots=['how','concept','example'].map(t=>`<span class="vdot ${(w['vid_'+t]||[]).length?'on':'off'}" title="${VID_META[t].label}"></span>`).join('');
+    const dots=['how','concept','example'].map(t=>`<span class="vdot ${vidArr(w,t).length?'on':'off'}" title="${VID_META[t].label}"></span>`).join('');
     const reviewBadge=w._pendingReviewId?`<span class="fb-badge" style="background:var(--vexample-light);color:var(--vexample);margin-left:4px;" title="Edited by staff, awaiting Main Admin review">Pending review</span>`:'';
     const draftBadge=isDraftEntry(w)?`<span class="fb-badge" style="background:var(--vhow-light);color:var(--vhow);margin-left:4px;" title="No How-to-Sign video yet — hidden from the public dictionary until one is added">Draft</span>`:'';
     return `<tr>
-      <td style="font-weight:500">${esc(w.en)}${reviewBadge}${draftBadge}</td>
+      <td style="font-weight:500">${esc(w.en||'(untitled)')}${reviewBadge}${draftBadge}</td>
       <td style="color:var(--text2);font-style:italic">${esc(w.es||'—')}</td>
       <td>${cats.map(c=>{const x=colorFor(c);return `<span class="pill" style="background:${x[0]};color:${x[1]};margin-right:2px;">${esc(c)}</span>`;}).join('')}</td>
       <td>${hands.map(h=>`<span class="pill" style="background:var(--accent-light);color:var(--accent);margin-right:2px;">${esc(h)}</span>`).join('')}</td>
@@ -6011,9 +6311,10 @@ function suggestSpanishFromInputs(){
 }
 
 async function fetchYoutubeTitle(videoId){
+  videoId=extractYtId(videoId);
   if(!videoId) return '';
   try{
-    const res=await fetch(`https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`);
+    const res=await fetch(`https://www.youtube.com/oembed?url=${encodeURIComponent('https://www.youtube.com/watch?v='+videoId)}&format=json`);
     if(!res.ok) return '';
     const data=await res.json();
     return data.title||'';
@@ -6251,7 +6552,7 @@ window.updateVidPreview=function(inputEl){
   const wrap=inputEl.closest('.vid-opt-row-wrap');
   const previewEl=wrap?.querySelector('.vid-opt-preview');
   if(!previewEl) return;
-  const id=safeYtId(inputEl.value.trim());
+  const id=extractYtId(inputEl.value);
   if(!id){ previewEl.innerHTML=''; previewEl.classList.remove('show'); return; }
   previewEl.classList.add('show');
   previewEl.innerHTML=`<div class="vid-opt-thumb" onclick="playVidPreview(this,${jsStr(id)})">
@@ -6276,7 +6577,7 @@ function setVidOptions(listId, values){
 }
 function getVidOptions(listId){
   return [...document.querySelectorAll(`#${listId} .vid-opt-row-wrap`)]
-    .map(row=>({id:row.querySelector('.vid-opt-input').value.trim(), label:row.querySelector('.vid-opt-label').value.trim()}))
+    .map(row=>({id:extractYtId(row.querySelector('.vid-opt-input').value), label:row.querySelector('.vid-opt-label').value.trim()}))
     .filter(o=>o.id);
 }
 
@@ -6390,6 +6691,11 @@ window.saveSign=async function(){
     hand,
     signDataTokenIndex: selectedSignDataTokenIndex,
   };
+  const badVid=[...data.vid_how,...data.vid_concept,...data.vid_example].find(o=>!YT_ID_RE.test(o.id));
+  if(badVid){ showToast('“'+badVid.id+'” is not a valid YouTube link or 11-character video ID.'); return; }
+  if(!editingId && WORDS.some(x=>(x.en||'').trim().toLowerCase()===en.toLowerCase())){
+    if(!confirm('A sign named “'+en+'” already exists. Add another entry with the same name?')) return;
+  }
   allCategoryDefs().forEach(def=>{ data[def.field]=editFormValues[def.field] ?? (def.type==='singleselect'?'':[]); });
 
   // saveWord() already upserts this into WORDS internally (see
@@ -6631,7 +6937,7 @@ window.toggleCategoryOnLanding=async function(colName,id,showOn){
       const reviewId = await createPendingReview(colName, id, item.value||item.name, 'edit', before, {...item, showOnLanding:false});
       await setDoc(doc(db,colName,id), {_pendingReviewId:reviewId}, {merge:true});
       item._pendingReviewId=reviewId;
-    }catch(err){ console.error(err); showToast('⚠ Could not save. Try again.'); }
+    }catch(err){ console.error(err); showToast('⚠ Could not save. Try again.'); return; }
     showToast('Card removed — sent to Main Admin for review');
   }
 };
@@ -6667,8 +6973,11 @@ window.renameBuiltinValue=async function(colName,key,id,newVal){
   const arr=builtinFieldByCol(colName).arr;
   const item=arr.find(x=>x.id===id); if(!item) return;
   const oldVal=item.value;
-  await updateValueDoc(colName,id,{value:newVal});
+  if(arr.some(x=>x.id!==id && x.value===newVal)){ showToast('That value already exists.'); return; }
+  const ok=await updateValueDoc(colName,id,{value:newVal});
+  if(!ok) return;
   item.value=newVal;
+  await propagateValueToSigns(colName,{},oldVal,newVal);
   const field=builtinFieldByCol(colName).field;
   WORDS.forEach(w=>{
     const v=w[field];
@@ -6687,8 +6996,11 @@ window.deleteBuiltinValue=async function(colName,key,id){
     ? 'This cannot be undone.'
     : 'This will be hidden right away and sent to Main Admin for review.';
   if(!confirm(`Delete "${removed}"?\n${note}`)) return;
-  await deleteValueDoc(colName,id,removed);
-  arr.splice(idx,1);
+  const ok=await deleteValueDoc(colName,id,removed);
+  if(!ok) return;
+  // (deleteValueDoc already removed it from the global list; Main Admin's delete is final,
+  // so also strip it from the signs in Firestore. Staff deletes wait for approval.)
+  if(isMainAdmin) await propagateValueToSigns(colName,{},removed,null);
   const field=builtinFieldByCol(colName).field;
   WORDS.forEach(w=>{
     const v=w[field];
@@ -6698,7 +7010,7 @@ window.deleteBuiltinValue=async function(colName,key,id){
   if(colName==='tags') buildFilterTags();
   buildFilterPanel(); doFilter();
   const wide=colName==='tags';
-  renderValueRows('blt_'+key, arr, wide, (rid,v)=>renameBuiltinValue(colName,key,rid,v), (rid)=>deleteBuiltinValue(colName,key,rid), colName);
+  renderValueRows('blt_'+key, builtinFieldByCol(colName).arr, wide, (rid,v)=>renameBuiltinValue(colName,key,rid,v), (rid)=>deleteBuiltinValue(colName,key,rid), colName);
   showToast('Deleted');
 };
 
@@ -6745,8 +7057,10 @@ window.deleteCustomCategory=async function(fieldId){
     : 'This will be hidden right away and sent to Main Admin for review.';
   if(!confirm(`Delete category "${cf.name}"? This removes it from all signs.\n${note}`)) return;
   const opts=CUSTOM_OPTIONS.filter(o=>o.fieldId===fieldId);
-  await deleteValueDoc('customFields', fieldId, cf.name);
+  const okField=await deleteValueDoc('customFields', fieldId, cf.name);
+  if(!okField) return;
   await Promise.all(opts.map(o=>deleteValueDoc('customFieldOptions', o.id, o.value)));
+  if(isMainAdmin) await purgeFieldFromSigns('cf_'+fieldId);
   CUSTOM_FIELDS=CUSTOM_FIELDS.filter(f=>f.id!==fieldId);
   CUSTOM_OPTIONS=CUSTOM_OPTIONS.filter(o=>o.fieldId!==fieldId);
   WORDS.forEach(w=>{ delete w['cf_'+fieldId]; });
@@ -6776,8 +7090,11 @@ window.renameCustomValue=async function(fieldId,optId,newVal){
   newVal=newVal.trim(); if(!newVal) return;
   const opt=CUSTOM_OPTIONS.find(o=>o.id===optId); if(!opt) return;
   const oldVal=opt.value;
-  await updateValueDoc('customFieldOptions',optId,{value:newVal});
+  if(CUSTOM_OPTIONS.some(o=>o.fieldId===fieldId && o.id!==optId && o.value===newVal)){ showToast('That value already exists.'); return; }
+  const ok=await updateValueDoc('customFieldOptions',optId,{value:newVal});
+  if(!ok) return;
   opt.value=newVal;
+  await propagateValueToSigns('customFieldOptions',{fieldId},oldVal,newVal);
   const field='cf_'+fieldId;
   WORDS.forEach(w=>{
     const v=w[field];
@@ -6795,8 +7112,12 @@ window.deleteCustomValue=async function(fieldId,optId){
     ? 'This cannot be undone.'
     : 'This will be hidden right away and sent to Main Admin for review.';
   if(!confirm(`Delete "${removed}"?\n${note}`)) return;
-  await deleteValueDoc('customFieldOptions',optId,removed);
-  CUSTOM_OPTIONS.splice(idx,1);
+  // BUG FIX: deleteValueDoc() already reassigned CUSTOM_OPTIONS without this option; the old
+  // extra CUSTOM_OPTIONS.splice(idx,1) here then removed the NEXT option from the in-memory
+  // list (and from the next rebuilt public snapshot).
+  const ok=await deleteValueDoc('customFieldOptions',optId,removed);
+  if(!ok) return;
+  if(isMainAdmin) await propagateValueToSigns('customFieldOptions',{fieldId},removed,null);
   const field='cf_'+fieldId;
   WORDS.forEach(w=>{
     const v=w[field];
@@ -6921,9 +7242,12 @@ window.confirmDeleteHandshape=async function(){
   if(!pendingDeleteHsId) return;
   const idx=HANDSHAPES.findIndex(h=>h.id===pendingDeleteHsId); if(idx===-1) return;
   const removedVal=HANDSHAPES[idx].value;
-  await deleteValueDoc('handshapes',pendingDeleteHsId,removedVal);
-  HANDSHAPES.splice(idx,1);
-  // Remove this handshape from any sign that used it
+  // BUG FIX: deleteValueDoc() already reassigned HANDSHAPES without this entry; the old extra
+  // HANDSHAPES.splice(idx,1) removed the NEXT handshape from memory (and from later snapshots).
+  const ok=await deleteValueDoc('handshapes',pendingDeleteHsId,removedVal);
+  if(!ok){ closeDeleteModal(); return; }
+  // Remove this handshape from any sign that used it (persisted for Main Admin; staff wait for approval)
+  if(isMainAdmin) await propagateValueToSigns('handshapes',{},removedVal,null);
   WORDS.forEach(w=>{ if(Array.isArray(w.hand)) w.hand=w.hand.filter(x=>x!==removedVal); });
   if(activeAZ===removedVal) activeAZ=null;
   pendingDeleteHsId=null;
@@ -6990,7 +7314,9 @@ window.renderFeedbackAdmin=async function(){
   }).join('');
 };
 window.deleteFeedback=async function(id,signId){
-  await deleteDoc(doc(db,'feedbackComments',id));
+  if(!confirm('Delete this feedback permanently? This cannot be undone.')) return;
+  try{ await deleteDoc(doc(db,'feedbackComments',id)); }
+  catch(err){ console.error(err); showToast('⚠ Could not delete feedback.'); return; }
   showToast('Feedback deleted');
   FEEDBACKS=FEEDBACKS.filter(f=>f.id!==id);
   if(signId && feedbackBySign[signId]) feedbackBySign[signId]=feedbackBySign[signId].filter(f=>f.id!==id);
@@ -7034,6 +7360,7 @@ function renderContactView(){
 }
 
 window.enterContactEdit=function(){
+  const cl=document.getElementById('contactLabelInput'); if(cl) cl.value=CONTACT_TAB_LABEL;
   document.getElementById('contactTitleInput').value=CONTACT_CONTENT.title;
   document.getElementById('contactBodyInput').value=CONTACT_CONTENT.body;
   document.getElementById('contactTitleView').style.display='none';
@@ -7053,10 +7380,16 @@ window.saveContactContent=async function(){
   const title=document.getElementById('contactTitleInput').value.trim()||'Get in Touch';
   const body=document.getElementById('contactBodyInput').value.trim();
   showSaving(true);
-  try{ await setDoc(doc(db,'siteContent','contact'),{title,body},{merge:true}); }
-  catch(err){ console.error('saveContactContent failed:',err); showToast('⚠ Could not save. Try again.'); showSaving(false); return; }
+  const lblEl=document.getElementById('contactLabelInput');
+  const label=lblEl?(lblEl.value.trim()||CONTACT_TAB_LABEL):CONTACT_TAB_LABEL;
+  try{
+    await setDoc(doc(db,'siteContent','contact'),{title,body},{merge:true});
+    if(label!==CONTACT_TAB_LABEL) await setDoc(doc(db,'siteContent','aboutContact'),{label},{merge:true});
+  }
+  catch(err){ console.error('saveContactContent failed:',err); showToast('⚠ Could not save ('+(err&&err.code?err.code:'error')+').'); showSaving(false); return; }
   showSaving(false);
-  CONTACT_CONTENT.title=title; CONTACT_CONTENT.body=body;
+  CONTACT_CONTENT.title=title; CONTACT_CONTENT.body=body; CONTACT_TAB_LABEL=label;
+  renderAboutTabBar(); renderHeaderNav();
   renderContactView();
   cancelContactEdit();
   showToast('Contact page header updated');
@@ -7107,9 +7440,10 @@ window.submitContactForm=async function(){
   // Validate
   if(!type){ errEl.textContent='Please select a type of enquiry.'; errEl.style.display='block'; return; }
   if(!name){ errEl.textContent='Please enter your name.'; errEl.style.display='block'; return; }
-  if(!email||!email.includes('@')){ errEl.textContent='Please enter a valid email address.'; errEl.style.display='block'; return; }
+  if(!/^[^\s@?&,;<>"']+@[^\s@?&,;<>"']+\.[^\s@?&,;<>"']+$/.test(email)){ errEl.textContent='Please enter a valid email address.'; errEl.style.display='block'; return; }
   if((type==='teacher'||type==='researcher')&&!org){ errEl.textContent='Please enter your organisation or institution.'; errEl.style.display='block'; return; }
   if(!message){ errEl.textContent='Please enter a message.'; errEl.style.display='block'; return; }
+  if(name.length>200||email.length>300||org.length>300||message.length>5000){ errEl.textContent='One of the fields is too long (name 200, organisation 300, message 5000 characters).'; errEl.style.display='block'; return; }
 
   submitBtn.disabled=true;
   submitBtn.innerHTML='<i class="ti ti-loader"></i> Sending…';
@@ -7210,10 +7544,13 @@ window.openContactDetail=function(id){
       <p style="font-size:11px;color:var(--text3);">${date}</p>
     </div>`;
   const replyBtn=document.getElementById('contactReplyBtn');
-  if(replyBtn && c.email){
+  // c.email is free text from a PUBLIC form: a value like "a@b.com?bcc=x@y.com" would have added
+  // hidden recipients to the admin's reply, so only well-formed addresses get a mailto link.
+  const safeEmail=/^[^\s@?&,;<>"']+@[^\s@?&,;<>"']+\.[^\s@?&,;<>"']+$/.test(c.email||'') ? c.email : '';
+  if(replyBtn && safeEmail){
     const subject=encodeURIComponent(`Re: SignBiz enquiry (${typeLabel})`);
     const body=encodeURIComponent(`Hi ${c.name||''},\n\nThank you for reaching out.\n\n`);
-    replyBtn.onclick=()=>{ window.open(`mailto:${c.email}?subject=${subject}&body=${body}`); };
+    replyBtn.onclick=()=>{ window.location.href=`mailto:${safeEmail}?subject=${subject}&body=${body}`; };
     replyBtn.style.display='flex';
   } else if(replyBtn){ replyBtn.style.display='none'; }
   document.getElementById('contactDetailModal').classList.add('show');
@@ -7252,10 +7589,10 @@ async function init(){
   dataLoadedPromise = loadAllPublic();
   try{ await dataLoadedPromise; }
   catch(e){ console.error(e); showToast('⚠ Firebase connection error. Check your config and Firestore rules.'); }
-  await loadAboutContent();
-  await loadContactContent();
-  await loadTopicsHeroContent();
-  await loadNavOrder();
+  // These four read independent siteContent docs — they used to run one after another, which
+  // made first paint wait for ~10 sequential round-trips.
+  try{ await Promise.all([loadAboutContent(), loadContactContent(), loadTopicsHeroContent(), loadNavOrder()]); }
+  catch(e){ console.error('site content load failed:', e); }
   renderHeaderNav();
   document.getElementById('appLoading').style.display='none';
   document.getElementById('mainHeader').style.display='flex';
@@ -7269,6 +7606,11 @@ async function init(){
   document.body.dataset.aboutSubpage='mission';
   renderAboutTabBar();
   showPage('topics');
+  // Deep link from the static SEO pages (/sign/<slug>/ → "/?sign=<id>"): open that sign directly.
+  try{
+    const sid=new URLSearchParams(location.search).get('sign');
+    if(sid && /^[A-Za-z0-9_-]{1,200}$/.test(sid)){ showPage('dict'); await selectWord(sid); }
+  }catch(e){ console.warn('deep link failed', e); }
 }
 
 /* ══ SIGN DATA (ELAN annotation lookup) ══
@@ -7297,12 +7639,17 @@ function vdDur(beginSec, endSec){
   return d>0?d.toFixed(3):'—';
 }
 
+// Remembered so the CSV export doesn't have to re-derive the word from the badge text
+// (which reads "WORD — selected recording" when one recording is selected, so the export
+// looked up a non-existent key and always said "No data to export").
+let vdCurrentWord='', vdCurrentTokens=[];
 window.openVdModal=function(wordEn, onlyTokenIndex){
   const key=wordEn.toUpperCase();
   const allTokens=SIGN_DATA[key]||[];
   const filtered = (typeof onlyTokenIndex==='number' && allTokens[onlyTokenIndex])
     ? [allTokens[onlyTokenIndex]] : null;
   const tokens = filtered || allTokens;
+  vdCurrentWord = wordEn; vdCurrentTokens = tokens;
   document.getElementById('vdWordBadge').textContent = filtered
     ? `${wordEn} — selected recording`
     : wordEn;
@@ -7375,18 +7722,21 @@ document.getElementById('vdModal')?.addEventListener('click',e=>{
 });
 
 window.vdExportCSV=function(){
-  const word=document.getElementById('vdWordBadge').textContent.toUpperCase();
-  const tokens=SIGN_DATA[word]||[];
-  if(!tokens.length){ showToast('No data to export.'); return; }
+  const word=vdCurrentWord;
+  const tokens=vdCurrentTokens;
+  if(!word || !tokens.length){ showToast('No data to export.'); return; }
+  const allTokens=SIGN_DATA[word.toUpperCase()]||[];
+  // Spreadsheet apps treat cells starting with = + - @ as formulas — neutralise them.
+  const cell=v=>{ let s=String(v??''); if(/^[=+\-@\t\r]/.test(s)) s="'"+s; return `"${s.replace(/"/g,'""')}"`; };
   const rows=[['Token','Tag','Begin TC','Begin Sec','End TC','End Sec','Duration','Value']];
-  tokens.forEach((tok,i)=>{
-    const allRows=[{...tok.gloss,tag:'GLOSS'},...tok.rows];
-    allRows.forEach(r=>{
+  tokens.forEach(tok=>{
+    const tokenNo=Math.max(0,allTokens.indexOf(tok))+1; // keep the real recording number even when only one is shown
+    [{...tok.gloss,tag:'GLOSS'},...tok.rows].forEach(r=>{
       const dur=(parseFloat(r.end_sec)-parseFloat(r.begin_sec)).toFixed(3);
-      rows.push([i+1,r.tag,r.begin_tc,r.begin_sec,r.end_tc,r.end_sec,dur,r.value]);
+      rows.push([tokenNo,r.tag,r.begin_tc,r.begin_sec,r.end_tc,r.end_sec,dur,r.value]);
     });
   });
-  const csv=rows.map(r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
+  const csv='\ufeff'+rows.map(r=>r.map(cell).join(',')).join('\n'); // BOM so Excel reads UTF-8
   const blob=new Blob([csv],{type:'text/csv;charset=utf-8;'});
   const url=URL.createObjectURL(blob);
   const a=document.createElement('a'); a.href=url; a.download=`signdata_${word.replace(/\s+/g,'_')}.csv`; a.click();
