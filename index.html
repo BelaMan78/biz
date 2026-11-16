@@ -3756,6 +3756,15 @@ function countForOption(fieldId,value){
   }).length;
 }
 
+// Rename an option (e.g. "MSSD Students") straight from its card in Manage mode. Reuses
+// renameCustomValue(), so signs using the option are updated too and staff renames go to review.
+window.renameCatOptCard=async function(fieldId,optId){
+  const opt=CUSTOM_OPTIONS.find(o=>o.id===optId); if(!opt) return;
+  const nv=prompt('Rename this option:', opt.value);
+  if(nv===null || !nv.trim() || nv.trim()===opt.value) return;
+  await renameCustomValue(fieldId,optId,nv);
+  renderCategoryOptionsPage(fieldId);
+};
 window.renderCategoryOptionsPage=function(fieldId){
   const cf=CUSTOM_FIELDS.find(f=>f.id===fieldId);
   const grid=document.getElementById('catOptGrid'); if(!grid) return;
@@ -3805,6 +3814,7 @@ window.renderCategoryOptionsPage=function(fieldId){
         <div class="topic-card-count">${opt.count} sign${opt.count===1?'':'s'}</div>
         ${desc}${pending}
         <div class="topic-card-mg-actions">
+          <button class="topic-card-mg-btn" onclick="event.stopPropagation();renameCatOptCard(${jsStr(fieldId)},${jsStr(opt.id)})"><i class="ti ti-pencil"></i> Rename</button>
           <button class="topic-card-mg-btn danger" onclick="event.stopPropagation();removeCatOptCard(${jsStr(fieldId)},${jsStr(opt.id)})"><i class="ti ti-eye-off"></i> Remove card</button>
         </div>
       </div>`;
@@ -6844,14 +6854,19 @@ function renderValueRows(listId,items,wide,onRename,onDelete,colName){
     const row=document.createElement('div');
     if(wide){
       row.style.cssText='display:flex;align-items:center;gap:4px;background:var(--bg2);border:0.5px solid var(--border);border-radius:20px;padding:3px 4px 3px 10px;';
-      row.innerHTML=`<span style="font-size:12px;">${esc(item.value)}</span><button class="option-row-del" style="width:20px;height:20px;border-radius:50%;"><i class="ti ti-x" style="font-size:11px;"></i></button>`;
+      // Tags used to render as a read-only <span>, so a tag could not be renamed at all.
+      row.innerHTML=`<input type="text" value="${esc(item.value)}" title="Click to rename — press Enter or click away to save" size="${Math.max(4,String(item.value).length+1)}" style="font-size:12px;border:none;background:transparent;outline:none;color:var(--text);min-width:40px;"/><button class="option-row-del" style="width:20px;height:20px;border-radius:50%;"><i class="ti ti-x" style="font-size:11px;"></i></button>`;
+      const tagInp=row.querySelector('input');
+      tagInp.oninput=()=>{ tagInp.size=Math.max(4,tagInp.value.length+1); };
+      tagInp.onchange=(e)=>onRename(item.id,e.target.value);
+      tagInp.onkeydown=(e)=>{ if(e.key==='Enter'){ e.preventDefault(); tagInp.blur(); } };
       row.querySelector('button').onclick=()=>onDelete(item.id);
     } else if(isTopics){
       row.className='option-row'; row.style.flexDirection='column'; row.style.alignItems='stretch'; row.style.gap='6px';
       const showOn=item.showOnLanding!==false; // topics default to shown
       row.innerHTML=`
         <div style="display:flex;align-items:center;gap:8px;">
-          <input type="text" value="${esc(item.value)}" style="flex:1;border:none;background:transparent;font-size:13px;color:var(--text);outline:none;"/>
+          <input type="text" value="${esc(item.value)}" title="Click to rename — press Enter or click away to save" style="flex:1;border:none;border-bottom:1px dashed var(--border2);background:transparent;font-size:13px;color:var(--text);outline:none;padding:2px 0;"/>
           <button class="option-row-del"><i class="ti ti-x"></i></button>
         </div>
         <label class="cf-landing-toggle" style="margin:0;"><input type="checkbox" ${showOn?'checked':''}/> Show as a card on the Topics landing page</label>
@@ -6866,7 +6881,7 @@ function renderValueRows(listId,items,wide,onRename,onDelete,colName){
       const showOn=item.showOnLanding!==false; // options default to shown (the category-level switch is the real opt-in gate)
       row.innerHTML=`
         <div style="display:flex;align-items:center;gap:8px;">
-          <input type="text" value="${esc(item.value)}" style="flex:1;border:none;background:transparent;font-size:13px;color:var(--text);outline:none;"/>
+          <input type="text" value="${esc(item.value)}" title="Click to rename — press Enter or click away to save" style="flex:1;border:none;border-bottom:1px dashed var(--border2);background:transparent;font-size:13px;color:var(--text);outline:none;padding:2px 0;"/>
           <button class="option-row-del"><i class="ti ti-x"></i></button>
         </div>
         <label class="cf-landing-toggle" style="margin:0;"><input type="checkbox" ${showOn?'checked':''}/> Show as a card on this category's page</label>
