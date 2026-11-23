@@ -464,8 +464,7 @@ body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--
 .vid-opt-player{width:220px;max-width:100%;aspect-ratio:16/9;border-radius:var(--r-md);overflow:hidden;}
 .vid-opt-player iframe{width:100%;height:100%;border:none;}
 .vid-opt-remove:hover{color:#c0392b;border-color:#c0392b;}
-.vid-shared-text{width:100%;min-height:62px;margin:4px 0 8px;}
-.form-field .vid-opt-text{width:100%;min-height:48px;margin-top:6px;font-size:12px;}
+.form-field .vid-opt-text{width:100%;min-height:56px;margin-top:6px;font-size:12px;background:var(--bg);}
 .vid-opt-row-wrap{padding-bottom:10px;border-bottom:0.5px dashed var(--border);}
 .vid-opt-row-wrap:last-child{border-bottom:none;padding-bottom:0;}
 .vid-split-note{display:none;font-size:11px;color:var(--vconcept);background:var(--vconcept-light);border-radius:var(--r-sm);padding:6px 9px;margin:0 0 8px;}
@@ -1265,24 +1264,24 @@ body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--
     <div style="background:var(--bg2);border-radius:var(--r-md);padding:12px 14px;margin-bottom:14px;">
       <p style="font-size:12px;font-weight:600;color:var(--text);margin-bottom:10px;"><i class="ti ti-brand-youtube" style="color:#FF0000;margin-right:5px;"></i>YouTube Video IDs (Unlisted)</p>
       <p class="yt-hint" style="margin-bottom:6px;">youtube.com/watch?v=<strong>THIS_PART</strong> — add more than one option if a word has more than one accepted way to sign it, and give each one a name (e.g. "Two-handed") so it's easy to tell apart. The name is what visitors see on the button for switching between videos.</p>
-      <p class="yt-hint" style="margin-bottom:10px;"><strong>Text:</strong> the box at the top of each section is shown for every video in that tab. If one video needs its own text (e.g. a different meaning), type it in the box under that video — it replaces the shared text while that video is selected.</p>
+      <p class="yt-hint" style="margin-bottom:10px;"><strong>Text:</strong> type the description, definition or example in the box under each video. Visitors see the text that belongs to the video they're watching.</p>
       <div class="form-field" style="margin-bottom:12px;">
         <label style="color:var(--vhow);">● How to Sign</label>
-        <textarea id="fDesc" class="vid-shared-text" placeholder="How to sign (description) — shared by all videos in this tab. Describe the hand movement step by step..."></textarea>
+        <textarea id="fDesc" hidden></textarea>
         <p class="vid-split-note" id="fVidHowSplitNote"></p>
         <div class="vid-opt-list" id="fVidHowList"></div>
         <button type="button" class="inline-add-btn vid-opt-add" onclick="addVidOption('fVidHowList')"><i class="ti ti-plus"></i> Add option</button>
       </div>
       <div class="form-field" style="margin-bottom:12px;">
         <label style="color:var(--vconcept);">● Explanation</label>
-        <textarea id="fDescConcept" class="vid-shared-text" placeholder="English Definition — shared by all videos in this tab. e.g. Income resulting from business activities in which you do not actively participate."></textarea>
+        <textarea id="fDescConcept" hidden></textarea>
         <p class="vid-split-note" id="fVidConceptSplitNote"></p>
         <div class="vid-opt-list" id="fVidConceptList"></div>
         <button type="button" class="inline-add-btn vid-opt-add" onclick="addVidOption('fVidConceptList')"><i class="ti ti-plus"></i> Add option</button>
       </div>
       <div class="form-field" style="margin-bottom:0;">
         <label style="color:var(--vexample);">● Example</label>
-        <textarea id="fDescExample" class="vid-shared-text" placeholder="Example — shared by all videos in this tab. Type an example sentence or scenario..."></textarea>
+        <textarea id="fDescExample" hidden></textarea>
         <p class="vid-split-note" id="fVidExampleSplitNote"></p>
         <div class="vid-opt-list" id="fVidExampleList"></div>
         <button type="button" class="inline-add-btn vid-opt-add" onclick="addVidOption('fVidExampleList')"><i class="ti ti-plus"></i> Add option</button>
@@ -1529,6 +1528,12 @@ function parseAliasInput(s){
   return String(s||'').split(/[,;\n]/).map(x=>x.trim()).filter(x=>{
     const k=x.toLowerCase(); if(!x||seen.has(k)) return false; seen.add(k); return true;
   });
+}
+// Text for a tab as visitors would first see it: the first video's own text,
+// else the tab-level text (older entries / tabs with no video yet).
+function tabText(w,type){
+  const own=(vidArr(w,type).find(o=>o.text&&o.text.trim())||{}).text;
+  return own || ({how:w.desc, concept:w.descConcept, example:w.descExample}[type]) || '';
 }
 function relIds(w,field){ return Array.isArray(w&&w[field]) ? w[field].map(String) : []; }
 function findWordById(id){ return WORDS.find(x=>String(x.id)===String(id)); }
@@ -7696,9 +7701,9 @@ window.applySignDataToken=function(word, tokenIndex){
 // "Two-handed" or "Regional variant" — instead of just one ID).
 // Placeholder for each video's own text box, by section.
 const VID_TEXT_PLACEHOLDER={
-  fVidHowList:'How to sign — this video only (optional; replaces the shared text above)',
-  fVidConceptList:'English Definition — this video only (optional; replaces the shared text above)',
-  fVidExampleList:'Example — this video only (optional; replaces the shared text above)',
+  fVidHowList:'How to sign — describe the hand movement step by step...',
+  fVidConceptList:'English Definition for this video...',
+  fVidExampleList:'Example sentence or scenario for this video...',
 };
 window.addVidOption=function(listId, value={id:'',label:'',text:''}){
   const list=document.getElementById(listId);
@@ -7776,20 +7781,42 @@ function splitNumberedText(text, n){
   const parts=marks.map((mk,i)=>t.slice(mk.end, i+1<marks.length?marks[i+1].start:t.length).trim());
   return parts.every(Boolean) ? parts : null;
 }
-function autoSplitSharedText(textareaId, listId, noteId){
+// The tab-level text (desc / descConcept / descExample) is no longer edited
+// in its own box — every video carries its own text instead. When an entry
+// is opened, any tab-level text is moved into the video boxes:
+//   • "#1 … #2 …" with one part per video → part 1 to video 1, part 2 to video 2…
+//   • otherwise → the same text into every video that has none yet
+//     (exactly what visitors already saw for each of those videos)
+//   • no video yet → into the first, empty row; saved back as the tab text
+// Nothing is written until the admin presses Save.
+function moveSharedTextIntoVideos(textareaId, listId, noteId){
   const ta=document.getElementById(textareaId), note=document.getElementById(noteId);
   if(note){ note.textContent=''; note.classList.remove('show'); }
-  const rows=[...document.querySelectorAll(`#${listId} .vid-opt-row-wrap`)]
-    .filter(r=>extractYtId(r.querySelector('.vid-opt-input').value));
-  if(!ta || rows.some(r=>(r.querySelector('.vid-opt-text')?.value||'').trim())) return;
-  const parts=splitNumberedText(ta.value, rows.length);
-  if(!parts) return;
-  rows.forEach((r,i)=>{ r.querySelector('.vid-opt-text').value=parts[i]; });
+  if(!ta) return;
+  const shared=ta.value.trim();
   ta.value='';
-  if(note){
-    note.textContent=`The numbered text (#1–#${parts.length}) was split so each video has its own part. Check it, then press Save sign.`;
-    note.classList.add('show');
+  if(!shared) return;
+  const rows=[...document.querySelectorAll(`#${listId} .vid-opt-row-wrap`)];
+  const vidRows=rows.filter(r=>extractYtId(r.querySelector('.vid-opt-input').value));
+  const txt=r=>r.querySelector('.vid-opt-text');
+  if(!vidRows.length){ if(rows[0] && !txt(rows[0]).value.trim()) txt(rows[0]).value=shared; return; }
+  const parts=vidRows.some(r=>txt(r).value.trim()) ? null : splitNumberedText(shared, vidRows.length);
+  if(parts){
+    vidRows.forEach((r,i)=>{ txt(r).value=parts[i]; });
+    if(note){
+      note.textContent=`The numbered text (#1–#${parts.length}) was split so each video has its own part. Check it, then press Save sign.`;
+      note.classList.add('show');
+    }
+    return;
   }
+  vidRows.forEach(r=>{ if(!txt(r).value.trim()) txt(r).value=shared; });
+}
+// Text typed in a row that has no video ID can't be stored on a video, so it
+// is kept as the tab-level text (shown in that tab until a video is added).
+function textFromRowsWithoutVideo(listId){
+  return [...document.querySelectorAll(`#${listId} .vid-opt-row-wrap`)]
+    .filter(r=>!extractYtId(r.querySelector('.vid-opt-input').value))
+    .map(r=>(r.querySelector('.vid-opt-text')?.value||'').trim()).filter(Boolean).join('\n\n');
 }
 
 window.openAddModal=function(){
@@ -7823,9 +7850,9 @@ window.openEditModal=function(id){
   setVidOptions('fVidHowList', vidArr(w,'how'));
   setVidOptions('fVidConceptList', vidArr(w,'concept'));
   setVidOptions('fVidExampleList', vidArr(w,'example'));
-  autoSplitSharedText('fDesc','fVidHowList','fVidHowSplitNote');
-  autoSplitSharedText('fDescConcept','fVidConceptList','fVidConceptSplitNote');
-  autoSplitSharedText('fDescExample','fVidExampleList','fVidExampleSplitNote');
+  moveSharedTextIntoVideos('fDesc','fVidHowList','fVidHowSplitNote');
+  moveSharedTextIntoVideos('fDescConcept','fVidConceptList','fVidConceptSplitNote');
+  moveSharedTextIntoVideos('fDescExample','fVidExampleList','fVidExampleSplitNote');
   buildModalFields(w);
   document.getElementById('editModal').classList.add('show');
   checkSignDataMatch();
@@ -7894,6 +7921,9 @@ function buildModalFields(w){
 window.closeEditModal=function(){ document.getElementById('editModal').classList.remove('show'); };
 
 window.saveSign=async function(){
+  document.getElementById('fDesc').value=textFromRowsWithoutVideo('fVidHowList');
+  document.getElementById('fDescConcept').value=textFromRowsWithoutVideo('fVidConceptList');
+  document.getElementById('fDescExample').value=textFromRowsWithoutVideo('fVidExampleList');
   const en=document.getElementById('fEn').value.trim();
   const hand=editFormValues.hand||[];
   if(!en||!hand.length){ showToast('Please fill in name and at least one handshape.'); return; }
@@ -8000,7 +8030,7 @@ function relSideHtml(w){
   const thumb=yt
     ? `<img class="rel-thumb" src="https://img.youtube.com/vi/${yt}/mqdefault.jpg" alt="" loading="lazy" onclick="openFsModal(${jsStr(yt)})" title="Watch How to Sign"/>`
     : `<div class="rel-thumb none" title="No How-to-Sign video yet"><i class="ti ti-video-off"></i></div>`;
-  const def=w.descConcept||w.desc||'';
+  const def=tabText(w,'concept')||tabText(w,'how');
   return `<div class="rel-side">${thumb}<div style="min-width:0;">
       <div class="rel-name" onclick="openEditModal(${jsStr(w.id)})" title="Open in editor">${esc(w.en)}</div>
       ${w.es?`<div style="font-size:11px;color:var(--text3);font-style:italic;">${esc(w.es)}</div>`:''}
