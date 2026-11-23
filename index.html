@@ -7232,12 +7232,7 @@ async function suggestFieldsFromInputs(){
   _suggestRunning=true;
   try{
     const name=document.getElementById('fEn')?.value.trim()||'';
-    let hit=findBus250(name);
-    if(!hit){
-      const firstYt=document.querySelector('#fVidHowList .vid-opt-input')?.value?.trim();
-      const ytTitle=firstYt ? await fetchYoutubeTitle(firstYt) : '';
-      if(ytTitle && !name) hit=findBus250(ytTitle,true);
-    }
+    const hit=findBus250(name); // matched on the English name only — the YouTube title never changes anything
     const filled=[];
     if(hit){
       const chapters=bus250Chapters(hit);
@@ -7286,21 +7281,10 @@ async function suggestSpanishFromInputs(){
 }
 
 document.getElementById('fEn')?.addEventListener('blur', suggestFieldsFromInputs);
-document.getElementById('fVidHowList')?.addEventListener('focusout', async (e)=>{
-  if(!e.target.classList.contains('vid-opt-input')) return;
-  const videoId=e.target.value.trim();
-  if(videoId){
-    const ytTitle=await fetchYoutubeTitle(videoId);
-    const fEnEl=document.getElementById('fEn');
-    if(ytTitle && fEnEl && !fEnEl.value.trim()){
-      // Only fill if the English name is still blank. If the title contains a BUS250 term,
-      // use that exact term (e.g. "Payback Period | ASL" → "PAYBACK PERIOD").
-      const hit=findBus250(ytTitle,true);
-      const upper=ytTitle===ytTitle.toUpperCase();
-      fEnEl.value=hit ? (upper?hit[0].term.toUpperCase():hit[0].term) : ytTitle;
-      window.checkSignDataMatch?.();
-    }
-  }
+// Pasting a YouTube link re-runs the auto-fill for the English name that's already typed
+// (Topic / Category / Book chapter under BUS250 / Spanish). The English field itself is never changed.
+document.getElementById('fVidHowList')?.addEventListener('focusout', (e)=>{
+  if(!e.target.classList.contains('vid-opt-input') || !e.target.value.trim()) return;
   suggestFieldsFromInputs();
 });
 
