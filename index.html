@@ -7159,58 +7159,82 @@ async function fillChipValues(fieldKey, values){
   return any;
 }
 
-// ── Book: Book category → "BUS250" book cover → chapter cards → signs ──
+// ── "Financial Literacy Lessons - BUS 250" category (Categories & Tags) ──
+// Category → BUS250 book cover → Chapter 1 … Chapter 15 cards → signs.
+// Created automatically the first time an admin opens the sign editor (only the missing
+// pieces are ever written). You can rename the category, the book or the chapter cards
+// afterwards — they're recognised by an internal key / chapter number, not by the text.
+const BUS250_FIELD_NAME = 'Financial Literacy Lessons - BUS 250';
+const BUS250_FIELD_KEY  = 'bus250';
+const squash = s => termKey(s).replace(/[^a-z0-9]/g,'');
 function bus250BookField(){
-  return CUSTOM_FIELDS.find(cf=>cf.type!=='paragraph' && /book|書|libro/i.test(cf.name||''));
+  return CUSTOM_FIELDS.find(cf=>cf.bus250Key===BUS250_FIELD_KEY) ||
+         CUSTOM_FIELDS.find(cf=>squash(cf.name)===squash(BUS250_FIELD_NAME));
 }
 function findBus250Book(cf){
   return booksOf(cf).find(b=>b.key===BUS250_BOOK_KEY) ||
-         booksOf(cf).find(b=>termKey(b.title).replace(/\s+/g,'')===BUS250_BOOK_KEY);
+         booksOf(cf).find(b=>squash(b.title)===BUS250_BOOK_KEY);
 }
-let _bus250BookBusy=null;
+// "Chapter 7" / "chapter 7 - anything" → 7
+function chapterNumOf(v){ const m=/^\s*chapter\s*(\d+)\b/i.exec(String(v||'')); return m?Number(m[1]):null; }
+function bus250ChapterOpt(cf,book,n){
+  const opts=CUSTOM_OPTIONS.filter(o=>o.fieldId===cf.id && chapterNumOf(o.value)===n);
+  return opts.find(o=>o.bookId===book.id) || opts.find(o=>!o.bookId) || null;
+}
+let _bus250Busy=null;
 async function ensureBus250Book(){
   if(!isAdmin) return null;
-  const cf=bus250BookField(); if(!cf) return null;
-  const found=findBus250Book(cf);
-  if(found) return {cf,book:found};
-  if(_bus250BookBusy) return _bus250BookBusy;
-  _bus250BookBusy=(async()=>{
-    const list=booksOf(cf);
-    const book={id:'book_'+BUS250_BOOK_KEY, key:BUS250_BOOK_KEY, title:BUS250_BOOK_TITLE, cover:'', order:list.length};
-    const ok=await saveBooks(cf.id,[...list,book]);
-    return ok?{cf,book}:null;
+  if(_bus250Busy) return _bus250Busy;
+  _bus250Busy=(async()=>{
+    let changed=false;
+    let cf=bus250BookField();
+    // 1) the category itself
+    if(!cf){
+      const data={name:BUS250_FIELD_NAME, type:'multiselect', researcherOnly:false, bus250Key:BUS250_FIELD_KEY};
+      try{ const ref=await addDoc(collection(db,'customFields'),data); cf={id:ref.id,...data}; CUSTOM_FIELDS.push(cf); changed=true; }
+      catch(err){ console.error(err); showToast('⚠ Could not create the BUS 250 category.'); return null; }
+    }
+    // 2) the BUS250 book inside it
+    let book=findBus250Book(cf);
+    if(!book){
+      const list=booksOf(cf);
+      book={id:'book_'+BUS250_BOOK_KEY, key:BUS250_BOOK_KEY, title:BUS250_BOOK_TITLE, cover:'', order:list.length};
+      if(!await saveBooks(cf.id,[...list,book])) return null;
+      changed=true;
+    }
+    // 3) Chapter 1 … Chapter 15, all inside the BUS250 book
+    for(let n=1;n<=BUS250_CHAPTER_HEADERS.length;n++){
+      const opt=bus250ChapterOpt(cf,book,n);
+      try{
+        if(!opt){
+          const data={fieldId:cf.id, value:'Chapter '+n, bookId:book.id, order:n};
+          const ref=await addDoc(collection(db,'customFieldOptions'),data);
+          CUSTOM_OPTIONS.push({id:ref.id,...data}); changed=true;
+        } else if(opt.bookId!==book.id){
+          await setDoc(doc(db,'customFieldOptions',opt.id),{bookId:book.id},{merge:true});
+          opt.bookId=book.id; changed=true;
+        }
+      }catch(err){ console.error(err); }
+    }
+    if(changed){
+      regeneratePublicSnapshot(); buildFilterPanel();
+      if(typeof renderOptionsPanel==='function' && document.getElementById('pageAdmin')?.classList.contains('active')) renderOptionsPanel();
+      if(document.getElementById('editModal')?.classList.contains('show')) buildModalFields(WORDS.find(x=>x.id===editingId)||{});
+    }
+    return {cf,book};
   })();
-  try{ return await _bus250BookBusy; } finally{ _bus250BookBusy=null; }
+  try{ return await _bus250Busy; } finally{ _bus250Busy=null; }
 }
-function chapterOptKey(v){ return termKey(String(v||'').replace(/^Chapter\s*\d+\s*[-–—:]\s*/i,'')); }
+// Tick "Chapter N" for every chapter the word belongs to (e.g. annuity → Chapter 2 + Chapter 14).
 async function fillBus250Book(chapters){
   const res=await ensureBus250Book(); if(!res) return false;
   const {cf,book}=res;
   const chipsEl=document.getElementById('chips_cf_'+cf.id);
   if(!chipsEl || chipsEl.querySelector('.ms-chip.on')) return false;
-  const wanted=[];
-  let changed=false;
-  for(const n of chapters){
-    const header=BUS250_CHAPTER_HEADERS[n-1], key=chapterOptKey(header);
-    const opts=CUSTOM_OPTIONS.filter(o=>o.fieldId===cf.id && chapterOptKey(o.value)===key);
-    let opt=opts.find(o=>o.bookId===book.id) || opts.find(o=>!o.bookId);
-    try{
-      if(!opt){
-        const data={fieldId:cf.id, value:header, bookId:book.id, order:n};
-        const ref=await addDoc(collection(db,'customFieldOptions'),data);
-        opt={id:ref.id,...data}; CUSTOM_OPTIONS.push(opt); changed=true;
-      } else if(!opt.bookId){
-        await setDoc(doc(db,'customFieldOptions',opt.id),{bookId:book.id},{merge:true});
-        opt.bookId=book.id; changed=true;
-      }
-    }catch(err){ console.error(err); continue; }
-    wanted.push(opt.value);
-  }
-  if(changed){ regeneratePublicSnapshot(); buildFilterPanel(); buildModalFields(WORDS.find(x=>x.id===editingId)||{}); }
-  const chips=[...(document.getElementById('chips_cf_'+cf.id)?.querySelectorAll('.ms-chip')||[])];
+  const wanted=chapters.map(n=>bus250ChapterOpt(cf,book,n)?.value).filter(Boolean);
   const single=cf.type==='singleselect';
   let any=false;
-  for(const chip of chips){
+  for(const chip of chipsEl.querySelectorAll('.ms-chip')){
     if(wanted.includes(chip.textContent) && !chip.classList.contains('on')){ chip.click(); any=true; if(single) break; }
   }
   return any;
@@ -7232,7 +7256,7 @@ async function suggestFieldsFromInputs(){
   _suggestRunning=true;
   try{
     const name=document.getElementById('fEn')?.value.trim()||'';
-    const hit=findBus250(name); // matched on the English name only — the YouTube title never changes anything
+    const hit=findBus250(name,true); // also works when the name is a full video title, e.g. "Down Payment | ASL"
     const filled=[];
     if(hit){
       const chapters=bus250Chapters(hit);
@@ -7257,7 +7281,7 @@ async function suggestSpanishFromInputs(){
   const esEl=document.getElementById('fEs');
   if(!enEl || !esEl || esEl.value.trim()) return false;
   const en=enEl.value.trim(); if(!en) return false;
-  const hit=findBus250(en);
+  const hit=findBus250(en,true);
   let es=hit ? hit[0].es : '';
   if(!es){
     const key=en.toLowerCase().replace(/\s*\([^)]*\)\s*/g,' ').replace(/\s+/g,' ').trim();
@@ -7281,10 +7305,18 @@ async function suggestSpanishFromInputs(){
 }
 
 document.getElementById('fEn')?.addEventListener('blur', suggestFieldsFromInputs);
-// Pasting a YouTube link re-runs the auto-fill for the English name that's already typed
-// (Topic / Category / Book chapter under BUS250 / Spanish). The English field itself is never changed.
-document.getElementById('fVidHowList')?.addEventListener('focusout', (e)=>{
-  if(!e.target.classList.contains('vid-opt-input') || !e.target.value.trim()) return;
+// Paste a YouTube link → if the English name is still empty, the video's title is put there
+// (exactly as it is on YouTube), then Topic / Category / Chapter (under BUS250) / Spanish are matched.
+document.getElementById('fVidHowList')?.addEventListener('focusout', async (e)=>{
+  if(!e.target.classList.contains('vid-opt-input')) return;
+  const videoId=e.target.value.trim();
+  if(videoId){
+    const fEnEl=document.getElementById('fEn');
+    if(fEnEl && !fEnEl.value.trim()){
+      const ytTitle=await fetchYoutubeTitle(videoId);
+      if(ytTitle && !fEnEl.value.trim()){ fEnEl.value=ytTitle; window.checkSignDataMatch?.(); }
+    }
+  }
   suggestFieldsFromInputs();
 });
 
