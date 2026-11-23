@@ -7075,7 +7075,7 @@ const BUS250_TERMS = [
 
 // ← The book's name. You can also rename it any time on the Book page (Manage cards → Edit);
 //   the rename is kept, because the book is recognised by its internal key, not its title.
-const BUS250_BOOK_TITLE = 'BUS250';
+const BUS250_BOOK_TITLE = 'BUS 250';
 const BUS250_BOOK_KEY   = 'bus250';
 
 const BUS250_CHAPTERS = BUS250_CHAPTER_HEADERS.map(h=>h.replace(/^Chapter\s*\d+\s*[-–—:]\s*/i,'').trim());
@@ -7159,42 +7159,38 @@ async function fillChipValues(fieldKey, values){
   return any;
 }
 
-// ── "Financial Literacy Lessons - BUS 250" category (Categories & Tags) ──
-// Category → BUS250 book cover → Chapter 1 … Chapter 15 cards → signs.
-// Created automatically the first time an admin opens the sign editor (only the missing
-// pieces are ever written). You can rename the category, the book or the chapter cards
-// afterwards — they're recognised by an internal key / chapter number, not by the text.
-const BUS250_FIELD_NAME = 'Financial Literacy Lessons - BUS 250';
-const BUS250_FIELD_KEY  = 'bus250';
+// ── Existing "Financial Literacy Lessons" category → 📘 BUS 250 book → Chapter 1 … 15 → signs ──
+// Uses the category you already have (it is never created here). The first time an admin opens
+// the sign editor, the BUS 250 book and its Chapter 1–15 cards are added inside it — only the
+// missing pieces, so nothing that's already in the category is touched. The book and the chapter
+// cards can be renamed later; they're recognised by an internal key / chapter number.
+const BUS250_FIELD_NAME = 'Financial Literacy Lessons';
 const squash = s => termKey(s).replace(/[^a-z0-9]/g,'');
 function bus250BookField(){
-  return CUSTOM_FIELDS.find(cf=>cf.bus250Key===BUS250_FIELD_KEY) ||
-         CUSTOM_FIELDS.find(cf=>squash(cf.name)===squash(BUS250_FIELD_NAME));
+  return CUSTOM_FIELDS.find(cf=>cf.type!=='paragraph' && squash(cf.name)===squash(BUS250_FIELD_NAME));
 }
 function findBus250Book(cf){
   return booksOf(cf).find(b=>b.key===BUS250_BOOK_KEY) ||
          booksOf(cf).find(b=>squash(b.title)===BUS250_BOOK_KEY);
 }
-// "Chapter 7" / "chapter 7 - anything" → 7
-function chapterNumOf(v){ const m=/^\s*chapter\s*(\d+)\b/i.exec(String(v||'')); return m?Number(m[1]):null; }
+// "Chapter 7" / "BUS 250 Chapter 7" → 7
+function chapterNumOf(v){ const m=/chapter\s*(\d+)\b/i.exec(String(v||'')); return m?Number(m[1]):null; }
+// Only chapter cards that are already inside the BUS 250 book count — chapters of your
+// other books are never reused or moved.
 function bus250ChapterOpt(cf,book,n){
-  const opts=CUSTOM_OPTIONS.filter(o=>o.fieldId===cf.id && chapterNumOf(o.value)===n);
-  return opts.find(o=>o.bookId===book.id) || opts.find(o=>!o.bookId) || null;
+  return CUSTOM_OPTIONS.find(o=>o.fieldId===cf.id && o.bookId===book.id && chapterNumOf(o.value)===n) || null;
 }
-let _bus250Busy=null;
+let _bus250Busy=null, _bus250Warned=false;
 async function ensureBus250Book(){
   if(!isAdmin) return null;
   if(_bus250Busy) return _bus250Busy;
   _bus250Busy=(async()=>{
-    let changed=false;
-    let cf=bus250BookField();
-    // 1) the category itself
+    const cf=bus250BookField();
     if(!cf){
-      const data={name:BUS250_FIELD_NAME, type:'multiselect', researcherOnly:false, bus250Key:BUS250_FIELD_KEY};
-      try{ const ref=await addDoc(collection(db,'customFields'),data); cf={id:ref.id,...data}; CUSTOM_FIELDS.push(cf); changed=true; }
-      catch(err){ console.error(err); showToast('⚠ Could not create the BUS 250 category.'); return null; }
+      if(!_bus250Warned){ _bus250Warned=true; showToast('⚠ Category "'+BUS250_FIELD_NAME+'" not found — BUS 250 chapters can\'t be auto-filled.'); }
+      return null;
     }
-    // 2) the BUS250 book inside it
+    let changed=false;
     let book=findBus250Book(cf);
     if(!book){
       const list=booksOf(cf);
@@ -7202,18 +7198,16 @@ async function ensureBus250Book(){
       if(!await saveBooks(cf.id,[...list,book])) return null;
       changed=true;
     }
-    // 3) Chapter 1 … Chapter 15, all inside the BUS250 book
     for(let n=1;n<=BUS250_CHAPTER_HEADERS.length;n++){
-      const opt=bus250ChapterOpt(cf,book,n);
+      if(bus250ChapterOpt(cf,book,n)) continue;
+      // Option values must be unique inside a category (a sign stores the text), so if another
+      // book already has a "Chapter n" card, this one is called "BUS 250 Chapter n" instead.
+      let value='Chapter '+n;
+      if(CUSTOM_OPTIONS.some(o=>o.fieldId===cf.id && o.value.toLowerCase()===value.toLowerCase())) value=BUS250_BOOK_TITLE+' Chapter '+n;
       try{
-        if(!opt){
-          const data={fieldId:cf.id, value:'Chapter '+n, bookId:book.id, order:n};
-          const ref=await addDoc(collection(db,'customFieldOptions'),data);
-          CUSTOM_OPTIONS.push({id:ref.id,...data}); changed=true;
-        } else if(opt.bookId!==book.id){
-          await setDoc(doc(db,'customFieldOptions',opt.id),{bookId:book.id},{merge:true});
-          opt.bookId=book.id; changed=true;
-        }
+        const data={fieldId:cf.id, value, bookId:book.id, order:n};
+        const ref=await addDoc(collection(db,'customFieldOptions'),data);
+        CUSTOM_OPTIONS.push({id:ref.id,...data}); changed=true;
       }catch(err){ console.error(err); }
     }
     if(changed){
