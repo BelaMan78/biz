@@ -4057,6 +4057,10 @@ function chapterCardLabel(opt,books){
     const rest=v.slice(t.length).replace(/^[\s\-–—:|·•]+/,'');
     if(rest) return rest;
   }
+  // Still works after the book is renamed (e.g. "BUS 250 Chapter 1" inside a book now called
+  // "Billingsley, … 16th Edition"): show the label from the word "Chapter" onward.
+  const m=/\bchapter\s*\d+/i.exec(v);
+  if(m && m.index>0) return v.slice(m.index).replace(/^chapter/i,'Chapter');
   return v;
 }
 
