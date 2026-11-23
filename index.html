@@ -253,6 +253,25 @@ body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--
 .entry-en.solo{margin-bottom:12px;}
 .entry-en-secondary{font-size:16px;font-weight:400;color:var(--text2);}
 .entry-es{font-size:15px;color:var(--text2);margin-bottom:12px;font-style:italic;}
+.entry-aliases{font-size:12px;color:var(--text3);margin:-6px 0 12px;line-height:1.5;}
+.entry-aliases span{font-weight:600;color:var(--text2);}
+.entry-related{padding-top:14px;margin-top:14px;border-top:0.5px solid var(--border);}
+.entry-related-title{font-size:12px;font-weight:600;color:var(--text2);margin-bottom:8px;display:flex;align-items:center;gap:5px;}
+.entry-related-list{display:flex;flex-wrap:wrap;gap:6px;}
+.entry-related-chip{font-size:12px;padding:5px 12px;border-radius:20px;border:0.5px solid var(--border2);background:var(--bg2);color:var(--accent);cursor:pointer;font-family:inherit;}
+.entry-related-chip:hover{background:var(--accent-light);border-color:var(--accent);}
+/* Admin: Related Signs review */
+.rel-pair{display:flex;align-items:stretch;gap:10px;border:0.5px solid var(--border);border-radius:var(--r-md);padding:12px;margin-bottom:10px;background:var(--bg);flex-wrap:wrap;}
+.rel-side{flex:1;min-width:200px;display:flex;gap:10px;align-items:flex-start;}
+.rel-thumb{width:96px;height:54px;border-radius:6px;object-fit:cover;background:var(--bg2);cursor:pointer;flex-shrink:0;border:0.5px solid var(--border);}
+.rel-thumb.none{display:flex;align-items:center;justify-content:center;color:var(--text3);font-size:18px;cursor:default;}
+.rel-name{font-size:13px;font-weight:600;color:var(--text);cursor:pointer;}
+.rel-name:hover{color:var(--accent);}
+.rel-def{font-size:11px;color:var(--text3);line-height:1.45;margin-top:3px;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;}
+.rel-mid{display:flex;align-items:center;color:var(--text3);font-size:18px;}
+.rel-actions{display:flex;flex-direction:column;gap:6px;justify-content:center;min-width:120px;}
+.rel-src{font-size:10px;padding:1px 7px;border-radius:10px;background:var(--bg2);color:var(--text3);align-self:flex-start;}
+.rel-section-title{font-size:13px;font-weight:600;color:var(--text);margin:20px 0 10px;}
 .entry-tags{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:18px;}
 .vid-tabs{display:flex;gap:6px;margin-bottom:10px;}
 .vid-tab{flex:1;display:flex;align-items:center;justify-content:center;gap:6px;padding:9px 8px;border-radius:var(--r-md);font-size:12px;font-weight:500;cursor:pointer;border:1.5px solid var(--border);background:var(--bg2);color:var(--text2);}
@@ -924,6 +943,7 @@ body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--
     <div class="admin-tab" id="atReview" style="display:none;" onclick="switchAdminTab('review')">Pending Review <span id="reviewCountBadge" class="fb-badge" style="display:none;background:var(--vexample-light);color:var(--vexample);margin-left:4px;">0</span></div>
     <div class="admin-tab" id="atContacts" onclick="switchAdminTab('contacts')">Contacts <span id="contactsCountBadge" class="fb-badge" style="display:none;background:var(--vexample-light);color:var(--vexample);margin-left:4px;">0</span></div>
     <div class="admin-tab" id="atElan" onclick="switchAdminTab('elan')">ELAN Data</div>
+    <div class="admin-tab" id="atRelated" onclick="switchAdminTab('related')">Related Signs <span id="relatedCountBadge" class="fb-badge" style="display:none;background:var(--vexample-light);color:var(--vexample);margin-left:4px;">0</span></div>
   </div>
 
   <div class="admin-tab-panel active" id="apSigns">
@@ -1012,6 +1032,25 @@ body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--
         <p id="elanProgressText" style="font-size:12px;color:var(--text3);margin-top:6px;"></p>
       </div>
       <div id="elanUploadResult" style="display:none;margin-top:14px;padding:10px 14px;border-radius:var(--r-md);font-size:13px;"></div>
+    </div>
+  </div>
+
+  <div class="admin-tab-panel" id="apRelated">
+    <div class="fb-admin-wrap" style="max-width:900px;">
+      <p style="font-size:12px;color:var(--text2);margin-bottom:6px;line-height:1.6;">
+        Pairs of signs that may be connected. <strong>Approve</strong> only when they are <strong>two different signs</strong> with related meanings — both entries then show each other under “Related signs”. Nothing is shown publicly until approved.
+      </p>
+      <p style="font-size:12px;color:var(--text2);margin-bottom:14px;line-height:1.6;">
+        If both videos show the <strong>same sign</strong>, reject the pair here and add the other word to the “Also called” box in the sign editor instead. Click a thumbnail to watch the video.
+      </p>
+      <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;margin-bottom:6px;background:var(--bg2);padding:12px;border-radius:var(--r-md);">
+        <div class="form-field" style="margin:0;flex:1;min-width:180px;"><label>Sign A</label><input type="text" id="relAddA" list="relSignList" placeholder="Start typing a sign…" autocomplete="off"/></div>
+        <div class="form-field" style="margin:0;flex:1;min-width:180px;"><label>Sign B</label><input type="text" id="relAddB" list="relSignList" placeholder="Start typing a sign…" autocomplete="off"/></div>
+        <button class="btn btn-primary" onclick="proposeRelatedPair()"><i class="ti ti-plus"></i> Suggest pair</button>
+        <datalist id="relSignList"></datalist>
+      </div>
+      <p style="font-size:11px;color:var(--text3);margin-bottom:4px;">New pairs go into the waiting list below and still need approval.</p>
+      <div id="relatedAdminList"><p style="color:var(--text3);font-size:13px;">Loading…</p></div>
     </div>
   </div>
 </div>
@@ -1204,6 +1243,11 @@ body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--
         </div>
       </div>
       <div class="form-field"><label>Spanish (Español)</label><input type="text" id="fEs" placeholder="e.g. Reunión"/></div>
+    </div>
+    <div class="form-field">
+      <label>Also called (other English names for this same sign)</label>
+      <input type="text" id="fAliases" placeholder="e.g. high-yield bond, spending plan — separate with commas"/>
+      <p class="yt-hint" style="margin-top:4px;">Searchable and shown under the title. Use this only when it's the <strong>same sign</strong>. If it's a different sign with a related meaning, link them in the <strong>Related Signs</strong> tab instead.</p>
     </div>
     <div id="fDynamicCategories"></div>
     <div class="form-grid">
@@ -1399,6 +1443,109 @@ function isDraftEntry(w){
 // screens (the admin table, edit forms) should keep using WORDS directly.
 function visibleWords(){
   return isAdmin ? WORDS : WORDS.filter(w=>!isDraftEntry(w));
+}
+
+/* ══════════════════════════════════════
+   ALIASES ("also called") & RELATED SIGNS
+   ══════════════════════════════════════
+   ALIASES — other English names for the SAME sign (same video). They are
+   searchable and shown under the title as "Also called: …", but never
+   create a second entry.
+     • w.aliases (array) on the sign doc is the source of truth once it exists
+       (an empty array means "no aliases" on purpose).
+     • Until a sign has been saved with an aliases field, DEFAULT_ALIASES
+       below supplies the starting list automatically — no Firestore write
+       needed. Editing the sign in the admin form saves whatever is in the
+       "Also called" box, which then overrides the default.
+
+   RELATED SIGNS — two DIFFERENT signs whose meanings are connected. Stored on
+   the sign docs themselves so they travel through the public snapshot with
+   no new collection or rule:
+     • related          — approved links (shown to everyone)
+     • relatedPending   — links an admin proposed, waiting for approval
+     • relatedRejected  — links an admin turned down (stay hidden)
+   RELATED_SUGGESTIONS are built-in candidate pairs; they show up in the
+   admin "Related Signs" tab as pending until someone approves or rejects
+   them. Nothing appears on the public site until it's approved. */
+const DEFAULT_ALIASES={
+  "sign_1785809614922":["high-yield bond"], // JUNK BOND
+  "sign_1785542671630":["net worth statement","statement of financial position"], // BALANCE SHEET
+  "sign_1792601025122":["spending plan"], // BUDGET
+  "sign_1792432538513":["portfolio income"], // INVESTMENT INCOME
+  "sign_1792601068294":["personal income and expense statement"], // CASH FLOW STATEMENT
+  "sign_1792601707858":["disposable income"], // TAKE-HOME PAY
+  "sign_1785022548231":["CD"], // CERTIFICATE OF DEPOSIT
+  "sign_1785102154766":["AI"], // ARTIFICIAL INTELLIGENCE
+  "sign_1785105028471":["FSA"], // FLEXIBLE SPENDING ACCOUNT
+  "sign_1785369308926":["IP"], // INTELLECTUAL PROPERTY
+  "sign_1785017456605":["POA"], // POWER OF ATTORNEY
+  "sign_1794847739179":["P2P lending"], // PEER-TO-PEER LENDING
+  "sign_1785808223907":["USD"], // US DOLLAR
+  "sign_1785369840553":["workers' comp"], // WORKERS COMPENSATION
+};
+const RELATED_SUGGESTIONS=[
+  ["sign_1792601707858","sign_1792519895454"], // TAKE-HOME PAY ↔ NET PAY
+  ["sign_1785540819864","sign_1793730375217"], // COPAY ↔ COPAYMENT
+  ["sign_1785454939422","sign_1785455209977"], // SHAREHOLDER ↔ STOCKHOLDER
+  ["sign_1793644571708","sign_1793644281340"], // INSURER ↔ INSURANCE COMPANY
+  ["sign_1793808916139","sign_1785808418935"], // TERM INSURANCE ↔ TERM POLICY
+  ["sign_1784931527723","sign_1785541262725"], // MIDDLEMAN ↔ INTERMEDIARY
+  ["sign_1785455980450","sign_1792689867242"], // EXPENSE ↔ EXPENSES
+  ["sign_1784931226089","sign_1792771229008"], // INCOME TAX ↔ INCOME TAXES
+  ["sign_1785455446148","sign_1794414120837"], // REFINANCING ↔ LOAN REFINANCING
+  ["sign_1785542176921","sign_1792527034856"], // DEDUCTION ↔ TAX DEDUCTION
+  ["sign_1785887112958","sign_1793201318104"], // PHISHING ↔ PHISHING SCAM
+  ["sign_1793646212388","sign_1793644497198"], // POLICYHOLDER ↔ INSURED
+  ["sign_1792519552555","sign_1785628745578"], // UNEARNED INCOME ↔ PASSIVE INCOME
+  ["sign_1785809614922","sign_1785714773585"], // JUNK BOND ↔ JUNK DEBT
+];
+function wordAliases(w){
+  if(!w) return [];
+  const src=Array.isArray(w.aliases) ? w.aliases : (DEFAULT_ALIASES[w.id]||[]);
+  return src.map(a=>String(a??'').trim()).filter(Boolean);
+}
+// First alias containing the (already folded) query, or '' if none.
+function aliasMatch(w,ql){ return ql ? (wordAliases(w).find(a=>foldText(a).includes(ql))||'') : ''; }
+function wordMatchesQuery(w,ql){
+  return foldText(w.en).includes(ql) || foldText(w.es).includes(ql) || !!aliasMatch(w,ql);
+}
+function parseAliasInput(s){
+  const seen=new Set();
+  return String(s||'').split(/[,;\n]/).map(x=>x.trim()).filter(x=>{
+    const k=x.toLowerCase(); if(!x||seen.has(k)) return false; seen.add(k); return true;
+  });
+}
+function relIds(w,field){ return Array.isArray(w&&w[field]) ? w[field].map(String) : []; }
+function findWordById(id){ return WORDS.find(x=>String(x.id)===String(id)); }
+// Approved related signs for the public detail page (drafts hidden from guests).
+function approvedRelatedWords(w){
+  const vis=visibleWords();
+  const ids=[...new Set(relIds(w,'related'))];
+  return ids.map(id=>vis.find(x=>String(x.id)===id)).filter(Boolean)
+    .sort((a,b)=>String(a.en).localeCompare(String(b.en),undefined,{sensitivity:'base'}));
+}
+function relatedPairStatus(a,b){
+  const wa=findWordById(a), wb=findWordById(b);
+  if(!wa||!wb) return 'missing';
+  a=String(a); b=String(b);
+  if(relIds(wa,'related').includes(b)||relIds(wb,'related').includes(a)) return 'approved';
+  if(relIds(wa,'relatedRejected').includes(b)||relIds(wb,'relatedRejected').includes(a)) return 'rejected';
+  return 'pending';
+}
+function relatedPairsByStatus(status){
+  const seen=new Set(), out=[];
+  const add=(a,b,src)=>{
+    a=String(a); b=String(b); if(a===b) return;
+    const k=[a,b].sort().join('|'); if(seen.has(k)) return; seen.add(k);
+    if(relatedPairStatus(a,b)===status) out.push({a,b,src});
+  };
+  RELATED_SUGGESTIONS.forEach(([a,b])=>add(a,b,'suggested'));
+  WORDS.forEach(w=>{
+    relIds(w,'relatedPending').forEach(b=>add(w.id,b,'proposed'));
+    relIds(w,'related').forEach(b=>add(w.id,b,'approved'));
+    relIds(w,'relatedRejected').forEach(b=>add(w.id,b,'rejected'));
+  });
+  return out;
 }
 
 // Escapes any string before it goes into an innerHTML template literal. Every value that
@@ -2081,7 +2228,9 @@ async function refreshAfterReviewAction(){
   renderAboutTabBar();
   if(document.getElementById('pageAdmin').classList.contains('active')){
     renderAdminTable();
+    if(document.getElementById('apRelated')?.classList.contains('active')) renderRelatedAdmin();
   }
+  refreshRelatedBadge();
 };
 
 // Pure render from whatever's currently cached in PENDING_REVIEWS — no
@@ -2497,7 +2646,11 @@ async function saveWord(w){
     const existing = WORDS.find(x=>String(x.id)===String(w.id));
     const before = existing || {id:w.id};
     await submitEditWithReview('signs', w.id, w.en||before.en, before, w, {isNew:!existing});
-    patchGlobalAfterSave('signs', w.id, w);
+    // Firestore wrote with {merge:true}, so fields the edit form doesn't touch
+    // (related / relatedPending / relatedRejected, etc.) still exist on the doc.
+    // Mirror that here — replacing the object outright dropped them from WORDS,
+    // and therefore from the next public snapshot.
+    patchGlobalAfterSave('signs', w.id, existing ? {...existing, ...w} : w);
     regeneratePublicSnapshot();
   }
   catch(err){ console.error(err); showToast('⚠ Could not save sign.'); }
@@ -3346,7 +3499,7 @@ onAuthStateChanged(auth, async user=>{
   });
   renderContactView();
   if(isMainAdmin) refreshReviewBadge();
-  if(isAdmin){ refreshFeedbackBadge(); refreshContactsBadge(); }
+  if(isAdmin){ refreshFeedbackBadge(); refreshContactsBadge(); (dataLoadedPromise||Promise.resolve()).then(refreshRelatedBadge); }
 });
 
 /* ══ PAGE ROUTING ══ */
@@ -4625,7 +4778,14 @@ function searchRank(w,ql){
   const other=(currentLang==='es'&&w.es)?w.en:w.es;
   const r=searchRankText(primary,ql);
   if(r<9) return r;
-  return searchRankText(other,ql)<9 ? 4 : 9;
+  if(searchRankText(other,ql)<9) return 4;
+  // Matched only through an "also called" name. An exact or starts-with alias hit
+  // ("AI", "USD") ranks right after the same kind of direct hit, so a short alias
+  // isn't buried under every word that merely contains those letters; any other
+  // alias hit is listed after all direct hits.
+  const ra=Math.min(9,...wordAliases(w).map(a=>searchRankText(a,ql)));
+  if(ra<=1) return ra+0.5;
+  return ra<9 ? 5 : 9;
 }
 function sortBySearchRank(list,ql){
   const label=w=>(currentLang==='es'&&w.es)?w.es:w.en;
@@ -4636,12 +4796,19 @@ function sortBySearchRank(list,ql){
 function buildAcItems(q){
   if(!q || q.length<1) return [];
   const ql=foldText(q);
-  const matches=visibleWords().filter(w=>foldText(w.en).includes(ql)||foldText(w.es).includes(ql));
+  const matches=visibleWords().filter(w=>wordMatchesQuery(w,ql));
   return sortBySearchRank(matches,ql)
     .slice(0,10)
     .map(w=>{
       const showEs=currentLang==='es'&&w.es;
-      return showEs?{id:w.id,label:w.es,sub:w.en}:{id:w.id,label:w.en,sub:w.es||''};
+      const it=showEs?{id:w.id,label:w.es,sub:w.en}:{id:w.id,label:w.en,sub:w.es||''};
+      // If the hit came only from an alias, say so ("JUNK BOND · also called high-yield bond")
+      // so it's clear why this entry showed up for what was typed.
+      if(!foldText(w.en).includes(ql) && !foldText(w.es).includes(ql)){
+        const al=aliasMatch(w,ql);
+        if(al){ it.sub='also called '+al; it.aliasHit=al; }
+      }
+      return it;
     });
 }
 function highlightMatch(text,q){
@@ -4654,7 +4821,7 @@ function renderAcDropdownInto(ddId,q){
   const dd=document.getElementById(ddId); if(!dd) return;
   const items=buildAcItems(q);
   if(!items.length||!q){ dd.classList.remove('show'); dd.innerHTML=''; return; }
-  dd.innerHTML=items.map((it,i)=>`<div class="search-ac-item" data-id="${esc(it.id)}" onmousedown="acSelect(${jsStr(it.id)})" onmouseover="acHover(${i})">${highlightMatch(it.label,q)}${it.sub?`<span style="font-size:11px;color:var(--text3);margin-left:6px;">${esc(it.sub)}</span>`:''}</div>`).join('');
+  dd.innerHTML=items.map((it,i)=>`<div class="search-ac-item" data-id="${esc(it.id)}" onmousedown="acSelect(${jsStr(it.id)})" onmouseover="acHover(${i})">${highlightMatch(it.label,q)}${it.sub?`<span style="font-size:11px;color:var(--text3);margin-left:6px;">${it.aliasHit?'also called '+highlightMatch(it.aliasHit,q):esc(it.sub)}</span>`:''}</div>`).join('');
   dd.classList.add('show');
 }
 function renderAcDropdown(q){ renderAcDropdownInto('searchAutocomplete',q); acFocusIndex=-1; }
@@ -4720,7 +4887,7 @@ function wordMatchesFilters(w, opts={}){
   const q=foldText((document.getElementById('globalSearch').value||'').trim());
   const fHand=document.getElementById('fHand')?.value||'';
   const fVid=document.getElementById('fVid')?.value||'';
-  if(q && !foldText(w.en).includes(q) && !foldText(w.es).includes(q)) return false;
+  if(q && !wordMatchesQuery(w,q)) return false;
   const hands=Array.isArray(w.hand)?w.hand:(w.hand?[w.hand]:[]);
   if(!opts.skipAZ && activeAZ && !hands.includes(activeAZ)) return false;
   if(fHand && !hands.includes(fHand)) return false;
@@ -4967,6 +5134,18 @@ function renderDetail(w){
   const descHtml=(tabDesc.text&&String(tabDesc.text).trim())
     ? `<p class="entry-desc"><strong>${tabDesc.label}:</strong> ${esc(tabDesc.text||'')}</p>` : '';
 
+  const aliasList=wordAliases(w);
+  const aliasHtml=aliasList.length
+    ? `<p class="entry-aliases"><span>Also called:</span> ${aliasList.map(a=>esc(a)).join(', ')}</p>` : '';
+  // Only APPROVED links are shown (pending/rejected ones never reach this list).
+  const relWords=approvedRelatedWords(w);
+  const relatedHtml=relWords.length
+    ? `<div class="entry-related"><p class="entry-related-title"><i class="ti ti-arrows-exchange"></i> Related signs</p>
+        <div class="entry-related-list">${relWords.map(r=>{
+          const lbl=(currentLang==='es'&&r.es)?r.es:r.en;
+          return `<button class="entry-related-chip" onclick="selectWord(${jsStr(r.id)})">${esc(lbl)}</button>`;
+        }).join('')}</div></div>` : '';
+
   document.getElementById('rightPanel').innerHTML=`
     <div class="detail-card">
       <div class="entry-header-row">
@@ -4975,6 +5154,7 @@ function renderDetail(w){
             ? `<p class="entry-en solo">${esc(w.es)} <span class="entry-en-secondary">| ${esc(w.en)}</span></p>`
             : `<p class="entry-en">${esc(w.en)}</p>${w.es?`<p class="entry-es">${esc(w.es)}</p>`:''}`
           }
+          ${aliasHtml}
         </div>
         <div class="entry-nav-buttons">
           ${prevId?`<button class="entry-nav-btn" onclick="selectWord(${jsStr(prevId)})" title="Previous word"><i class="ti ti-chevron-left"></i><span class="entry-nav-label">Previous</span></button>`:''}
@@ -4986,6 +5166,7 @@ function renderDetail(w){
       ${vidOptionsHtml}
       <div class="video-box">${videoHtml}</div>
       ${descHtml}
+      ${relatedHtml}
       ${researcherHtml}
       <div class="feedback-wrap" id="feedbackWrap_${w.id}">
         ${renderFeedbackSection(w)}
@@ -5340,7 +5521,7 @@ function renderAdminTable(){
 
   const q=(document.getElementById('adminSearchInput')?.value||'').trim().toLowerCase();
   const filtered=q
-    ? WORDS.filter(w=>w.en.toLowerCase().includes(q)||(w.es||'').toLowerCase().includes(q))
+    ? WORDS.filter(w=>w.en.toLowerCase().includes(q)||(w.es||'').toLowerCase().includes(q)||wordAliases(w).some(a=>a.toLowerCase().includes(q)))
     : WORDS;
   const sorted=[...filtered].sort((a,b)=>a.en.localeCompare(b.en,undefined,{sensitivity:'base'}));
 
@@ -7551,7 +7732,7 @@ window.openAddModal=function(){
   ensureBus250Book().catch(()=>{});
   editingId=null; editFormSpecial=[]; editFormValues={}; lastAutoLetterHand=null; signDataAutoHandValues=[]; selectedSignDataTokenIndex=null;
   document.getElementById('modalTitle').textContent='Add new sign';
-  ['fEn','fEs','fDesc','fDescConcept','fDescExample'].forEach(id=>document.getElementById(id).value='');
+  ['fEn','fEs','fAliases','fDesc','fDescConcept','fDescExample'].forEach(id=>document.getElementById(id).value='');
   setVidOptions('fVidHowList', []); setVidOptions('fVidConceptList', []); setVidOptions('fVidExampleList', []);
   buildModalFields({});
   document.getElementById('editModal').classList.add('show');
@@ -7570,6 +7751,7 @@ window.openEditModal=function(id){
   document.getElementById('modalTitle').textContent='Edit sign';
   document.getElementById('fEn').value=w.en||'';
   document.getElementById('fEs').value=w.es||'';
+  document.getElementById('fAliases').value=wordAliases(w).join(', ');
   document.getElementById('fDesc').value=w.desc||'';
   document.getElementById('fDescConcept').value=w.descConcept||'';
   document.getElementById('fDescExample').value=w.descExample||'';
@@ -7649,6 +7831,7 @@ window.saveSign=async function(){
   if(!en||!hand.length){ showToast('Please fill in name and at least one handshape.'); return; }
   const data={
     en, es:document.getElementById('fEs').value.trim(),
+    aliases:parseAliasInput(document.getElementById('fAliases').value),
     desc:document.getElementById('fDesc').value.trim(),
     descConcept:document.getElementById('fDescConcept').value.trim(),
     descExample:document.getElementById('fDescExample').value.trim(),
@@ -7713,7 +7896,7 @@ window.confirmDelete=async function(){
 
 /* ══ ADMIN TABS ══ */
 window.switchAdminTab=async function(tab){
-  ['signs','options','handshapes','feedback','review','contacts','elan'].forEach(t=>{
+  ['signs','options','handshapes','feedback','review','contacts','elan','related'].forEach(t=>{
     const k=t.charAt(0).toUpperCase()+t.slice(1);
     document.getElementById('at'+k)?.classList.toggle('active',t===tab);
     document.getElementById('ap'+k)?.classList.toggle('active',t===tab);
@@ -7735,6 +7918,162 @@ window.switchAdminTab=async function(tab){
     renderPendingReviewsAdmin();
   }
   if(tab==='contacts')  { renderContactsAdmin().then(markContactsSeen); }
+  if(tab==='related')   renderRelatedAdmin();
+};
+
+/* ══ RELATED SIGNS — admin review (see ALIASES & RELATED SIGNS near the top) ══ */
+function refreshRelatedBadge(){
+  if(!isAdmin) return;
+  paintCountBadge('relatedCountBadge', relatedPairsByStatus('pending').length);
+}
+function relSideHtml(w){
+  const v=vidArr(w,'how')[0];
+  const yt=v?safeYtId(v.id):'';
+  const thumb=yt
+    ? `<img class="rel-thumb" src="https://img.youtube.com/vi/${yt}/mqdefault.jpg" alt="" loading="lazy" onclick="openFsModal(${jsStr(yt)})" title="Watch How to Sign"/>`
+    : `<div class="rel-thumb none" title="No How-to-Sign video yet"><i class="ti ti-video-off"></i></div>`;
+  const def=w.descConcept||w.desc||'';
+  return `<div class="rel-side">${thumb}<div style="min-width:0;">
+      <div class="rel-name" onclick="openEditModal(${jsStr(w.id)})" title="Open in editor">${esc(w.en)}</div>
+      ${w.es?`<div style="font-size:11px;color:var(--text3);font-style:italic;">${esc(w.es)}</div>`:''}
+      ${def?`<div class="rel-def">${esc(def)}</div>`:''}
+    </div></div>`;
+}
+function relPairRowHtml(p, mode){
+  const wa=findWordById(p.a), wb=findWordById(p.b);
+  if(!wa||!wb) return '';
+  const A=jsStr(p.a), B=jsStr(p.b);
+  const srcLabel={suggested:'Suggested', proposed:'Suggested by an admin'}[p.src]||'';
+  let actions='';
+  if(mode==='pending') actions=`
+      ${srcLabel?`<span class="rel-src">${srcLabel}</span>`:''}
+      <button class="btn btn-primary" onclick="approveRelatedPair(${A},${B})"><i class="ti ti-check"></i> Approve</button>
+      <button class="btn" onclick="rejectRelatedPair(${A},${B})"><i class="ti ti-x"></i> Reject</button>`;
+  else if(mode==='approved') actions=`
+      <span class="rel-src" style="background:var(--vhow-light);color:var(--vhow);">Live</span>
+      <button class="btn" onclick="rejectRelatedPair(${A},${B})"><i class="ti ti-unlink"></i> Remove link</button>`;
+  else actions=`
+      <span class="rel-src">Rejected</span>
+      <button class="btn" onclick="reopenRelatedPair(${A},${B})"><i class="ti ti-arrow-back-up"></i> Back to waiting list</button>`;
+  return `<div class="rel-pair">${relSideHtml(wa)}<div class="rel-mid"><i class="ti ti-arrows-left-right"></i></div>${relSideHtml(wb)}<div class="rel-actions">${actions}</div></div>`;
+}
+function renderRelatedAdmin(){
+  const el=document.getElementById('relatedAdminList'); if(!el) return;
+  const dl=document.getElementById('relSignList');
+  if(dl && dl.children.length!==WORDS.length){
+    dl.innerHTML=[...WORDS].sort((a,b)=>String(a.en).localeCompare(String(b.en),undefined,{sensitivity:'base'}))
+      .map(w=>`<option value="${esc(w.en)}"></option>`).join('');
+  }
+  const pending=relatedPairsByStatus('pending');
+  const approved=relatedPairsByStatus('approved');
+  const rejected=relatedPairsByStatus('rejected');
+  const section=(title,list,mode,empty,collapsed)=>{
+    const body=list.length?list.map(p=>relPairRowHtml(p,mode)).join(''):`<p style="font-size:12px;color:var(--text3);">${empty}</p>`;
+    return collapsed
+      ? `<details style="margin-top:20px;"><summary class="rel-section-title" style="cursor:pointer;display:list-item;">${title} (${list.length})</summary>${body}</details>`
+      : `<p class="rel-section-title">${title} (${list.length})</p>${body}`;
+  };
+  el.innerHTML=
+    section('Waiting for approval',pending,'pending','Nothing waiting — all caught up.',false)+
+    section('Approved (shown on the site)',approved,'approved','No approved links yet.',false)+
+    section('Rejected (hidden)',rejected,'rejected','None.',true);
+  refreshRelatedBadge();
+}
+// Writes only the given fields to one sign doc. Goes through the same
+// submitEditWithReview() path as every other sign edit, so a Staff admin's
+// approval is still logged for Main Admin in Pending Review.
+async function writeSignFields(id, fields){
+  const w=findWordById(id); if(!w) throw new Error('Sign not found: '+id);
+  const before={...w};
+  await submitEditWithReview('signs', w.id, w.en, before, fields);
+  Object.assign(w, fields);
+}
+const relUniq=arr=>[...new Set(arr.map(String))];
+const relWithout=(arr,id)=>arr.filter(x=>x!==String(id));
+async function afterRelatedChange(msg){
+  regeneratePublicSnapshot();
+  renderRelatedAdmin();
+  if(activeWord){ const w=findWordById(activeWord); if(w) renderDetail(w); }
+  showToast(msg);
+}
+window.approveRelatedPair=async function(a,b){
+  const wa=findWordById(a), wb=findWordById(b); if(!wa||!wb) return;
+  showSaving(true);
+  try{
+    await writeSignFields(a,{
+      related:relUniq([...relIds(wa,'related'),b]),
+      relatedPending:relWithout(relIds(wa,'relatedPending'),b),
+      relatedRejected:relWithout(relIds(wa,'relatedRejected'),b),
+    });
+    await writeSignFields(b,{
+      related:relUniq([...relIds(wb,'related'),a]),
+      relatedPending:relWithout(relIds(wb,'relatedPending'),a),
+      relatedRejected:relWithout(relIds(wb,'relatedRejected'),a),
+    });
+  }catch(err){ console.error('approveRelatedPair failed:',err); showToast('⚠ Could not approve. Try again.'); showSaving(false); return; }
+  showSaving(false);
+  afterRelatedChange('Approved — now shown on both signs');
+};
+// Used both for rejecting a waiting pair and for removing an approved link.
+// Either way the pair ends up in "Rejected" so a built-in suggestion doesn't
+// pop back into the waiting list on its own.
+window.rejectRelatedPair=async function(a,b){
+  const wa=findWordById(a), wb=findWordById(b); if(!wa||!wb) return;
+  showSaving(true);
+  try{
+    await writeSignFields(a,{
+      related:relWithout(relIds(wa,'related'),b),
+      relatedPending:relWithout(relIds(wa,'relatedPending'),b),
+      relatedRejected:relUniq([...relIds(wa,'relatedRejected'),b]),
+    });
+    if(relIds(wb,'related').includes(String(a)) || relIds(wb,'relatedPending').includes(String(a))){
+      await writeSignFields(b,{
+        related:relWithout(relIds(wb,'related'),a),
+        relatedPending:relWithout(relIds(wb,'relatedPending'),a),
+      });
+    }
+  }catch(err){ console.error('rejectRelatedPair failed:',err); showToast('⚠ Could not save. Try again.'); showSaving(false); return; }
+  showSaving(false);
+  afterRelatedChange('Hidden — not shown on the site');
+};
+window.reopenRelatedPair=async function(a,b){
+  const wa=findWordById(a), wb=findWordById(b); if(!wa||!wb) return;
+  showSaving(true);
+  try{
+    await writeSignFields(a,{
+      relatedRejected:relWithout(relIds(wa,'relatedRejected'),b),
+      relatedPending:relUniq([...relIds(wa,'relatedPending'),b]),
+    });
+    if(relIds(wb,'relatedRejected').includes(String(a))){
+      await writeSignFields(b,{relatedRejected:relWithout(relIds(wb,'relatedRejected'),a)});
+    }
+  }catch(err){ console.error('reopenRelatedPair failed:',err); showToast('⚠ Could not save. Try again.'); showSaving(false); return; }
+  showSaving(false);
+  afterRelatedChange('Moved back to the waiting list');
+};
+window.proposeRelatedPair=async function(){
+  const pick=inputId=>{
+    const name=(document.getElementById(inputId).value||'').trim().toLowerCase();
+    const hits=WORDS.filter(w=>String(w.en).trim().toLowerCase()===name);
+    return {name, hits};
+  };
+  const A=pick('relAddA'), B=pick('relAddB');
+  if(!A.name||!B.name){ showToast('Choose two signs.'); return; }
+  if(!A.hits.length||!B.hits.length){ showToast('Pick each sign from the list so the name matches exactly.'); return; }
+  if(A.hits.length>1||B.hits.length>1){ showToast('More than one sign has that exact name — rename one first so they can be told apart.'); return; }
+  const wa=A.hits[0], wb=B.hits[0];
+  if(String(wa.id)===String(wb.id)){ showToast('Choose two different signs.'); return; }
+  const st=relatedPairStatus(wa.id,wb.id);
+  const listed=relatedPairsByStatus('pending').some(p=>[p.a,p.b].sort().join('|')===[String(wa.id),String(wb.id)].sort().join('|'));
+  if(st==='approved'){ showToast('These two are already linked.'); return; }
+  if(st==='rejected'){ showToast('This pair was rejected before — use “Back to waiting list” in the Rejected section.'); return; }
+  if(listed){ showToast('This pair is already waiting for approval.'); return; }
+  showSaving(true);
+  try{ await writeSignFields(wa.id,{relatedPending:relUniq([...relIds(wa,'relatedPending'),wb.id])}); }
+  catch(err){ console.error('proposeRelatedPair failed:',err); showToast('⚠ Could not save. Try again.'); showSaving(false); return; }
+  showSaving(false);
+  document.getElementById('relAddA').value=''; document.getElementById('relAddB').value='';
+  afterRelatedChange('Added to the waiting list');
 };
 
 /* ══ CATEGORIES & TAGS PANEL (per-document model) ══ */
