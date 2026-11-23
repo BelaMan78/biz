@@ -988,6 +988,7 @@ body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--
         <input type="text" id="newHsInput" placeholder="New handshape (e.g. A, ILY...)" maxlength="6" style="font-size:13px;padding:7px 10px;border-radius:var(--r-md);border:0.5px solid var(--border2);background:var(--bg);color:var(--text);outline:none;width:240px;" onkeydown="if(event.key==='Enter')addHandshape()"/>
         <button class="btn btn-primary" onclick="addHandshape()"><i class="ti ti-plus"></i> Add handshape</button>
       </div>
+      <div id="hsImgSizeNote" style="display:none;align-items:center;gap:10px;flex-wrap:wrap;font-size:12px;color:var(--text2);background:var(--bg2);border-radius:var(--r-md);padding:8px 12px;margin-bottom:14px;"></div>
       <div class="hs-manage-grid" id="hsMgGrid"></div>
     </div>
   </div>
@@ -1339,6 +1340,11 @@ body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js';
 import { getFirestore, collection, doc, getDoc, getDocs, setDoc, deleteDoc, addDoc, query, where, orderBy, onSnapshot, writeBatch, deleteField }
   from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
+// Namespace import for the optional aggregation helpers (getAggregateFromServer /
+// count / average). A named import of an export that didn't exist would stop the
+// whole site from loading; looking them up on the namespace just yields undefined,
+// and loadFeedbackForSign() then falls back to reading the rating docs.
+import * as FirestoreNS from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
 import { getAuth, onAuthStateChanged, signInWithEmailAndPassword, signInWithPopup, GoogleAuthProvider, signOut }
   from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js';
 import { initializeAppCheck, ReCaptchaV3Provider, getToken }
@@ -1427,7 +1433,8 @@ let activeVideoIndices={how:0, concept:0, example:0};
 let editingId=null, deletingId=null, editFormSpecial=[], editFormValues={};
 let currentLang='en', currentUser=null;
 let fbRating=0, fbType='';
-let feedbackBySign={}; // signId → array of feedback docs (cached after first load per sign)
+let feedbackBySign={}; // signId → array of COMMENT docs (cached after first load per sign)
+let ratingStatsBySign={}; // signId → {count, avg} — from one aggregation query, not one read per rating
 let isAdmin=false; // determined by checking admins/{email} collection after login
 let isMainAdmin=false; // true only if admins/{email}.role === 'main'
 let isResearcher=false; // true if admins/{email}.role === 'researcher' (read-only, no admin panel)
@@ -1764,15 +1771,33 @@ function chunkDictionaryForSnapshot(words){
 // extra calls just flag "run once more when you finish" — and that final run serializes
 // the latest in-memory state, which is also what callers that mutate WORDS right after
 // calling this actually want.
-let snapshotRegenRunning=false, snapshotRegenQueued=false;
-async function regeneratePublicSnapshot(){
-  if(snapshotRegenRunning){ snapshotRegenQueued=true; return; }
-  snapshotRegenRunning=true;
-  try{
-    do{ snapshotRegenQueued=false; await regeneratePublicSnapshotNow(); }
-    while(snapshotRegenQueued);
-  } finally { snapshotRegenRunning=false; }
+// Returns a promise of true/false so callers that care (the "Rebuild snapshot"
+// button) can report the real outcome; everyone else just fires and forgets.
+let snapshotRegenRunning=null, snapshotRegenQueued=false;
+function regeneratePublicSnapshot(){
+  if(snapshotRegenRunning){ snapshotRegenQueued=true; return snapshotRegenRunning; }
+  snapshotRegenRunning=(async()=>{
+    let ok=false;
+    try{ do{ snapshotRegenQueued=false; ok=await regeneratePublicSnapshotNow(); } while(snapshotRegenQueued); }
+    finally{ snapshotRegenRunning=null; }
+    return ok;
+  })();
+  return snapshotRegenRunning;
 }
+// A failed rebuild used to be visible only in the browser console, so a broken
+// visitor copy could go unnoticed. Admins now get a (throttled) warning.
+let lastSnapshotWarn={msg:'',at:0}, snapshotWarnPaused=false;
+function snapshotProblem(msg){
+  console.warn('[snapshot] '+msg);
+  if(!isAdmin || snapshotWarnPaused) return;
+  const now=Date.now();
+  if(lastSnapshotWarn.msg===msg && now-lastSnapshotWarn.at<30000) return;
+  lastSnapshotWarn={msg,at:now};
+  showToast('⚠ '+msg, 9000);
+}
+// Firestore's hard limit is 1 MiB per document; leave room for field names.
+const SNAPSHOT_DOC_MAX_BYTES=1000000;
+function dataUrlBytes(s){ return (typeof s==='string' && s.startsWith('data:')) ? s.length : 0; }
 async function regeneratePublicSnapshotNow(){
   try{
     const v=Date.now(); // one version stamp shared by every doc of this snapshot
@@ -1781,14 +1806,23 @@ async function regeneratePublicSnapshotNow(){
       tags:SPECIAL_TAGS, handshapes:HANDSHAPES,
       customFields:CUSTOM_FIELDS, customFieldOptions:CUSTOM_OPTIONS
     });
+    // The lists doc carries every handshape picture and book cover, so it is the
+    // one that can outgrow Firestore's 1 MiB limit. Check BEFORE writing: a
+    // failed batch leaves visitors on an old copy, and a missing copy makes
+    // every visitor read the whole database instead.
+    const listsBytes=new TextEncoder().encode(listsPayload).length;
+    if(listsBytes>SNAPSHOT_DOC_MAX_BYTES){
+      const hsKB=Math.round(HANDSHAPES.reduce((t,h)=>t+dataUrlBytes(h.image),0)/1024);
+      const coverKB=Math.round(CUSTOM_FIELDS.reduce((t,cf)=>t+(Array.isArray(cf.books)?cf.books.reduce((u,b)=>u+dataUrlBytes(b&&b.cover),0):0),0)/1024);
+      snapshotProblem(`Visitors' copy NOT updated: categories/handshapes data is ${Math.round(listsBytes/1024)} KB (limit ~976 KB). Handshape pictures: ${hsKB} KB, book covers: ${coverKB} KB. Use “Shrink images” in Manage → Handshapes.`);
+      return false;
+    }
     const chunks=chunkDictionaryForSnapshot(WORDS);
     const listsDoc={json:listsPayload, updatedAt:v, v};
     const chunkDocs=chunks.map(c=>({json:JSON.stringify(c), updatedAt:v, v}));
     const metaDoc={chunkCount:chunks.length, updatedAt:v, v};
     if(chunks.length<=8){
-      // One atomic commit: a visitor can never read the new meta next to old chunks
-      // (previously these were separate parallel writes, so a failure half-way
-      // left lists/chunks/meta from different generations).
+      // One atomic commit: a visitor can never read the new meta next to old chunks.
       const batch=writeBatch(db);
       batch.set(doc(db,'publicSnapshot','lists'), listsDoc);
       chunkDocs.forEach((d,i)=>batch.set(doc(db,'publicSnapshot','dictionary_'+i), d));
@@ -1801,8 +1835,13 @@ async function regeneratePublicSnapshotNow(){
       for(let i=0;i<chunkDocs.length;i++) await setDoc(doc(db,'publicSnapshot','dictionary_'+i), chunkDocs[i]);
       await setDoc(doc(db,'publicSnapshot','dictionary_meta'), metaDoc);
     }
+    return true;
   }catch(err){
     console.error('regeneratePublicSnapshot failed — visitors will keep using the last good snapshot until a future save succeeds:', err);
+    // Ordinary visitors also call this (silently denied) when the snapshot is
+    // missing — only warn someone who can actually do something about it.
+    snapshotProblem('Could not update the visitors’ copy of the dictionary ('+((err&&err.code)||'error')+'). Your change is saved; press “Rebuild snapshot” to retry.');
+    return false;
   }
 }
 
@@ -1847,6 +1886,77 @@ async function loadAllPublic(){
     regeneratePublicSnapshot(); // best-effort: build it now so next time is cheap (silently fails for non-admins)
   }
 }
+
+/* ── SITE CONTENT SNAPSHOT ──
+   The About pages, Contact text, About tab order, custom About pages, Topics
+   header and nav order are each their own siteContent doc — 9+ separate reads
+   for every visitor, more than the whole dictionary snapshot. publicSnapshot/site
+   bundles all of them into ONE doc, so a visitor pays 1 read for the lot.
+   • Rebuilt (admin only) after every siteContent write — see siteContentChanged().
+   • If it's missing, too big, or unreadable, every loader silently falls back to
+     reading the individual docs, exactly like before. */
+let SITE_CACHE=null; // {docId: data} from publicSnapshot/site, or null → read docs directly
+let siteSnapshotLoaded=null; // promise → true if the bundle was found at startup
+const SITE_SNAPSHOT_MAX_BYTES=900000; // stay under Firestore's 1 MiB per-doc limit
+async function loadSiteSnapshot(){
+  SITE_CACHE=null;
+  try{
+    const snap=await getDoc(doc(db,'publicSnapshot','site'));
+    const d=snap.exists()?snap.data():null;
+    if(d && typeof d.json==='string' && !d.tooBig){
+      const parsed=JSON.parse(d.json);
+      if(parsed && typeof parsed==='object') SITE_CACHE=parsed;
+    }
+  }catch(err){ console.warn('Site content snapshot unavailable — reading pages directly:', err); }
+  return !!SITE_CACHE;
+}
+// Drop-in for getDoc(doc(db,'siteContent',id)): same .exists()/.data() shape,
+// served from the bundle when we have one.
+async function getSiteDoc(id){
+  if(SITE_CACHE){
+    const has=Object.prototype.hasOwnProperty.call(SITE_CACHE,id);
+    const data=has?SITE_CACHE[id]:undefined;
+    return {exists:()=>has, data:()=>data};
+  }
+  return getDoc(doc(db,'siteContent',id));
+}
+let siteRegenRunning=null, siteRegenQueued=false;
+async function regenerateSiteSnapshotNow(){
+  if(!isAdmin) return false;
+  try{
+    const snap=await getDocs(collection(db,'siteContent'));
+    const all={}; snap.docs.forEach(d=>{ all[d.id]=d.data(); });
+    const json=JSON.stringify(all);
+    const bytes=new TextEncoder().encode(json).length;
+    const v=Date.now();
+    if(bytes>SITE_SNAPSHOT_MAX_BYTES){
+      // Too big to bundle (usually large pictures pasted into an About page).
+      // Mark it so visitors go back to reading the pages one by one.
+      await setDoc(doc(db,'publicSnapshot','site'),{tooBig:true, bytes, updatedAt:v, v});
+      snapshotProblem(`About/Contact pages are too large to bundle (${Math.round(bytes/1024)} KB). The site still works but costs more reads — use smaller pictures in the About pages.`);
+      return false;
+    }
+    await setDoc(doc(db,'publicSnapshot','site'),{json, bytes, updatedAt:v, v});
+    SITE_CACHE=all;
+    return true;
+  }catch(err){
+    console.error('regenerateSiteSnapshot failed:',err);
+    snapshotProblem('Could not update the visitors’ copy of the About/Contact pages. Try “Rebuild snapshot”.');
+    return false;
+  }
+}
+function regenerateSiteSnapshot(){
+  if(siteRegenRunning){ siteRegenQueued=true; return siteRegenRunning; }
+  siteRegenRunning=(async()=>{
+    let ok=false;
+    try{ do{ siteRegenQueued=false; ok=await regenerateSiteSnapshotNow(); } while(siteRegenQueued); }
+    finally{ siteRegenRunning=null; }
+    return ok;
+  })();
+  return siteRegenRunning;
+}
+// Call after ANY write to the siteContent collection.
+function siteContentChanged(){ regenerateSiteSnapshot(); }
 
 // ELAN sign-data lookup table (signData/{WORD} → {tokens:[...]}). Loaded once
 // at startup into a plain object keyed by uppercase word, exactly like the
@@ -2237,7 +2347,9 @@ async function clearAboutPagePendingDelete(fsKey){
 
 async function refreshAfterReviewAction(){
   await loadAll();
+  SITE_CACHE=null;            // admin needs the real pages here, not the visitor bundle
   await loadAboutSubContent();
+  regenerateSiteSnapshot();
   // No loadPendingReviews() here anymore — approveReview/rejectReview's own
   // writes to pendingReviews land through the realtime listener (see
   // subscribePendingReviews) a moment later and update PENDING_REVIEWS,
@@ -2781,7 +2893,7 @@ ABOUT_SUB_DEFS.forEach(d=>{ ABOUT_SUB_CONTENT[d.key]={title:d.defaultTitle, body
 async function loadAboutSubContent(){
   await Promise.all(ABOUT_SUB_DEFS.map(async d=>{
     try{
-      const snap=await getDoc(doc(db,'siteContent',d.fsKey));
+      const snap=await getSiteDoc(d.fsKey);
       if(snap.exists()){
         const data=snap.data();
         if(data.title) ABOUT_SUB_CONTENT[d.key].title=data.title;
@@ -2791,7 +2903,7 @@ async function loadAboutSubContent(){
     }catch(err){ console.error('loadAboutSubContent failed for '+d.key,err); }
   }));
   try{
-    const cs=await getDoc(doc(db,'siteContent','aboutContact'));
+    const cs=await getSiteDoc('aboutContact');
     if(cs.exists() && cs.data().label) CONTACT_TAB_LABEL=cs.data().label;
   }catch(err){ console.error('load contact tab label failed:',err); }
   await Promise.all([loadAboutExtraPages(), loadAboutTabOrder()]);
@@ -2807,7 +2919,7 @@ async function loadAboutSubContent(){
 async function loadAboutExtraPages(){
   ABOUT_EXTRA_DEFS=[];
   try{
-    const snap=await getDoc(doc(db,'siteContent','aboutExtraPages'));
+    const snap=await getSiteDoc('aboutExtraPages');
     if(snap.exists() && Array.isArray(snap.data().pages)){
       for(const p of snap.data().pages){
         if(!p.key||!p.fsKey) continue;
@@ -2815,7 +2927,7 @@ async function loadAboutExtraPages(){
         ABOUT_EXTRA_DEFS.push(def);
         ABOUT_SUB_CONTENT[def.key]={title:def.defaultTitle, body:def.defaultBody};
         try{
-          const pageSnap=await getDoc(doc(db,'siteContent',def.fsKey));
+          const pageSnap=await getSiteDoc(def.fsKey);
           if(pageSnap.exists()){
             const data=pageSnap.data();
             if(data.title) ABOUT_SUB_CONTENT[def.key].title=data.title;
@@ -2830,6 +2942,7 @@ async function loadAboutExtraPages(){
 async function saveAboutExtraPagesRegistry(){
   const pages=ABOUT_EXTRA_DEFS.map(d=>({key:d.key, fsKey:d.fsKey, label:d.label, _pendingDeleteReviewId:d._pendingDeleteReviewId||null}));
   await setDoc(doc(db,'siteContent','aboutExtraPages'),{pages});
+  siteContentChanged();
 }
 
 let aboutCurrentSub='mission';
@@ -2865,7 +2978,7 @@ function allAboutDefs(){
 
 async function loadAboutTabOrder(){
   try{
-    const snap=await getDoc(doc(db,'siteContent','aboutTabOrder'));
+    const snap=await getSiteDoc('aboutTabOrder');
     if(snap.exists() && Array.isArray(snap.data().order) && snap.data().order.length){
       ABOUT_TAB_ORDER=snap.data().order;
     }
@@ -2873,6 +2986,7 @@ async function loadAboutTabOrder(){
 }
 async function saveAboutTabOrder(){
   await setDoc(doc(db,'siteContent','aboutTabOrder'),{order:ABOUT_TAB_ORDER});
+  siteContentChanged();
 }
 
 let aboutTabDragSrc=null;
@@ -3017,6 +3131,7 @@ window.confirmAddAboutTab=async function(){
   showSaving(true);
   try{
     await setDoc(doc(db,'siteContent',fsKey),{title,body:'<p>Write content here.</p>',label},{merge:true});
+    siteContentChanged();
     // Previously the new tab only existed in memory — nothing recorded
     // *that* this page exists or where it sits in the order, so it
     // vanished on the next page load. These two writes are what make
@@ -3260,6 +3375,7 @@ window.saveAboutSub=async function(sub){
   showSaving(true);
   try{
     await setDoc(doc(db,'siteContent',def.fsKey),{title,body,label},{merge:true});
+    siteContentChanged();
     const labelChanged=label!==def.label;
     def.label=label; // built-in and custom defs are live objects, so this updates the tab + dropdown
     if(labelChanged && ABOUT_EXTRA_DEFS.some(d=>d.key===sub)) await saveAboutExtraPagesRegistry();
@@ -3305,6 +3421,7 @@ window.confirmDeleteAboutPage=async function(){
       // Permanent: drop the content doc, the registry entry, and the
       // tab's slot in the shared order.
       await deleteDoc(doc(db,'siteContent',def.fsKey));
+      siteContentChanged();
       ABOUT_EXTRA_DEFS.splice(idx,1);
       await saveAboutExtraPagesRegistry();
       ABOUT_TAB_ORDER=ABOUT_TAB_ORDER.filter(k=>k!==key);
@@ -3367,19 +3484,54 @@ async function loadFeedback(){
 // dedicated rating doc apart from a comment's own (display-only) rating
 // field — without that, a logged-in user's rating+comment submitted
 // together would count twice toward the average.
-async function loadFeedbackForSign(signId){
+// Reads are cached for the rest of the visit: opening the same sign again
+// (Previous/Next, back from search, switching tabs) costs nothing. Pass
+// force=true after this visitor posts something, so they see it.
+//
+// Star ratings are summarised with ONE aggregation query (count + average),
+// billed as 1 read per 1,000 ratings, instead of downloading every rating doc
+// (1 read EACH). If the aggregation isn't available or fails (e.g. Firestore
+// asks for an index — the console error then contains a one-click link to
+// create it), it falls back to the old way so the stars still show.
+const feedbackLoadedAt={}; // signId → true once loaded this visit
+async function loadRatingStats(signId){
+  const ratingsQ=query(collection(db,'feedback'), where('signId','==',signId));
+  const {getAggregateFromServer, count, average}=FirestoreNS;
+  if(typeof getAggregateFromServer==='function' && typeof count==='function' && typeof average==='function'){
+    try{
+      const snap=await getAggregateFromServer(ratingsQ,{n:count(), avg:average('rating')});
+      const d=snap.data();
+      return {count:Number(d.n)||0, avg:(typeof d.avg==='number' && isFinite(d.avg))?d.avg:0};
+    }catch(err){
+      console.warn('Rating aggregation failed — falling back to reading each rating. If the message below has a link, open it to create the index Firestore needs:', err);
+    }
+  }
+  const docs=(await getDocs(ratingsQ)).docs.map(d=>d.data()).filter(f=>typeof f.rating==='number' && f.rating>0);
+  return {count:docs.length, avg:docs.length?docs.reduce((s,f)=>s+f.rating,0)/docs.length:0};
+}
+async function loadFeedbackForSign(signId, force=false){
+  if(!force && feedbackLoadedAt[signId]) return feedbackBySign[signId]||[];
   try{
-    const ratingsQ  = query(collection(db,'feedback'), where('signId','==',signId));
     const commentsQ = isAdmin
       ? query(collection(db,'feedbackComments'), where('signId','==',signId))
       : query(collection(db,'feedbackComments'), where('signId','==',signId), where('isPublic','==',true));
-    const [ratingsSnap, commentsSnap] = await Promise.all([getDocs(ratingsQ), getDocs(commentsQ)]);
-    const ratings  = ratingsSnap.docs.map(d=>({id:d.id,...d.data(), _kind:'rating'}));
-    const comments = commentsSnap.docs.map(d=>({id:d.id,...d.data(), _kind:'comment'}));
-    const all = [...ratings, ...comments].sort((a,b)=>(b.ts||0)-(a.ts||0));
-    feedbackBySign[signId]=all;
-    return all;
-  }catch(err){ console.error('loadFeedbackForSign failed:',err); feedbackBySign[signId]=[]; return []; }
+    const [stats, commentsSnap] = await Promise.all([loadRatingStats(signId), getDocs(commentsQ)]);
+    const comments = commentsSnap.docs.map(d=>({id:d.id,...d.data(), _kind:'comment'}))
+      .sort((a,b)=>(b.ts||0)-(a.ts||0));
+    ratingStatsBySign[signId]=stats;
+    feedbackBySign[signId]=comments;
+    feedbackLoadedAt[signId]=true;
+    return comments;
+  }catch(err){
+    console.error('loadFeedbackForSign failed:',err);
+    feedbackBySign[signId]=feedbackBySign[signId]||[];
+    return feedbackBySign[signId];
+  }
+}
+// Who can see private comments changed (sign in / out) — forget what was cached.
+function resetFeedbackCache(){
+  feedbackBySign={}; ratingStatsBySign={};
+  Object.keys(feedbackLoadedAt).forEach(k=>delete feedbackLoadedAt[k]);
 }
 
 /* ══ AUTH ══ */
@@ -3410,8 +3562,13 @@ window.doLogout=async function(){ await signOut(auth); isAdmin=false; showToast(
 window.manualRebuildSnapshot=async function(){
   showSaving(true);
   try{
-    await loadAll(); // fresh direct read of all 8 collections + auto-regenerates the snapshot at the end
-    showToast('Public snapshot rebuilt from the latest data.');
+    await loadAll(); // fresh direct read of all 8 collections (also starts a snapshot rebuild)
+    // Wait for the actual rebuilds — this used to say "rebuilt" even when they failed.
+    const [okDict, okSite]=await Promise.all([regeneratePublicSnapshot(), regenerateSiteSnapshot()]);
+    if(okDict && okSite) showToast('Public snapshot rebuilt from the latest data.');
+    else showToast('⚠ Rebuild did not fully succeed — see the message above or the browser console.', 9000);
+    buildFilterPanel(); buildFilterTags(); buildHsGrid(); doFilter();
+    if(document.getElementById('pageAdmin')?.classList.contains('active')) renderAdminTable();
   }catch(err){
     console.error(err);
     showToast('⚠ Could not rebuild snapshot. Check the console for details.');
@@ -3479,7 +3636,7 @@ onAuthStateChanged(auth, async user=>{
   if(!isAdmin){
     // Signed out (or a non-admin signed in): drop anything an admin session loaded —
     // private feedback comments and contact-form messages (names/emails) — from memory AND the DOM.
-    FEEDBACKS=[]; CONTACTS=[]; feedbackBySign={};
+    FEEDBACKS=[]; CONTACTS=[];
     ['fbAdminList','contactAdminList'].forEach(id=>{ const el=document.getElementById(id); if(el) el.innerHTML=''; });
   }
   if(user && !adminData && !user.emailVerified && user.providerData.some(p=>p.providerId==='password')){
@@ -3506,8 +3663,14 @@ onAuthStateChanged(auth, async user=>{
     if(rBtn) rBtn.style.display='none';
     if(document.getElementById('pageAdmin').classList.contains('active')) showPage('dict');
   }
+  // Signing in or out changes which comments may be seen (admins see private
+  // ones) — drop the per-visit feedback cache and reload the open sign's.
+  resetFeedbackCache();
   // Refresh detail panel (feedback box depends on login state) and admin tables
-  if(activeWord){ const w=WORDS.find(x=>x.id===activeWord); if(w) renderDetail(w); }
+  if(activeWord){
+    const w=WORDS.find(x=>x.id===activeWord);
+    if(w){ renderDetail(w); const id=w.id; loadFeedbackForSign(id).then(()=>{ if(activeWord===id) renderDetail(w); }); }
+  }
   if(document.getElementById('pageAdmin').classList.contains('active')) (dataLoadedPromise||Promise.resolve()).then(renderAdminTable);
   rerenderActiveLandingSurface();
   renderHeaderNav();
@@ -3520,6 +3683,8 @@ onAuthStateChanged(auth, async user=>{
   renderContactView();
   if(isMainAdmin) refreshReviewBadge();
   if(isAdmin){ refreshFeedbackBadge(); refreshContactsBadge(); (dataLoadedPromise||Promise.resolve()).then(refreshRelatedBadge); }
+  // First admin visit after this update (or after the bundle went missing): build it.
+  if(isAdmin) (siteSnapshotLoaded||Promise.resolve(false)).then(ok=>{ if(!ok && !SITE_CACHE) regenerateSiteSnapshot(); });
 });
 
 /* ══ PAGE ROUTING ══ */
@@ -3711,7 +3876,7 @@ function buildHsGrid(){
     cell.addEventListener('dblclick',()=>{
       if(!currentUser) return; // admin image-upload shortcut stays available regardless of clickable, so admins can still manage handshape images for letters with no current signs
       const inp=document.createElement('input'); inp.type='file'; inp.accept='image/*';
-      inp.onchange=async e=>{ const f=e.target.files[0]; if(!f) return; const b64=await fileToB64(f); await updateValueDoc('handshapes',h.id,{image:b64}); h.image=b64; buildHsGrid(); renderHsMgGrid(); showToast(`Handshape ${l} updated`); };
+      inp.onchange=async e=>{ const f=e.target.files[0]; if(!f) return; await uploadHandshapeImage(h,f); };
       inp.click();
     });
     grid.appendChild(cell);
@@ -3720,6 +3885,34 @@ function buildHsGrid(){
 }
 window.setAZ=function(l){ activeAZ=l; buildHsGrid(); doFilter(); };
 function fileToB64(f){ return new Promise(res=>{ const r=new FileReader(); r.onload=e=>res(e.target.result); r.readAsDataURL(f); }); }
+// Handshape pictures are shown at ~40–80 px but used to be stored at full size,
+// and ALL of them live in one snapshot doc capped at 1 MiB. Resize to at most
+// 240 px; keep PNG (transparent background) unless JPEG is much smaller.
+const HS_IMG_MAX_SIDE=240;
+async function shrinkImageSrc(src, maxSide=HS_IMG_MAX_SIDE){
+  const img=await new Promise((res,rej)=>{ const i=new Image(); i.onload=()=>res(i); i.onerror=()=>rej(new Error('Could not read that image.')); i.src=src; });
+  const scale=Math.min(1, maxSide/Math.max(img.naturalWidth||1, img.naturalHeight||1));
+  const w=Math.max(1,Math.round(img.naturalWidth*scale)), h=Math.max(1,Math.round(img.naturalHeight*scale));
+  const c=document.createElement('canvas'); c.width=w; c.height=h;
+  c.getContext('2d').drawImage(img,0,0,w,h);
+  const png=c.toDataURL('image/png');
+  if(png.length<=60000) return png;
+  const c2=document.createElement('canvas'); c2.width=w; c2.height=h;
+  const x=c2.getContext('2d'); x.fillStyle='#fff'; x.fillRect(0,0,w,h); x.drawImage(img,0,0,w,h);
+  const jpg=c2.toDataURL('image/jpeg',0.85);
+  return jpg.length<png.length*0.7 ? jpg : png;
+}
+async function handshapeFileToDataUrl(f){
+  if(!/^image\//.test(f.type||'')) throw new Error('Please choose an image file.');
+  return shrinkImageSrc(await fileToB64(f));
+}
+async function uploadHandshapeImage(h, f){
+  let b64;
+  try{ b64=await handshapeFileToDataUrl(f); }catch(err){ showToast('⚠ '+err.message); return; }
+  const ok=await updateValueDoc('handshapes',h.id,{image:b64});
+  if(!ok) return; // don't show a picture that wasn't saved
+  h.image=b64; buildHsGrid(); renderHsMgGrid(); showToast(`Handshape ${h.value} updated`);
+}
 
 /* ══ FILTER PANEL ══ */
 function builtinCategoryDefs(){
@@ -4533,7 +4726,7 @@ let TOPICS_HERO={
 };
 async function loadTopicsHeroContent(){
   try{
-    const snap=await getDoc(doc(db,'siteContent','topicsLanding'));
+    const snap=await getSiteDoc('topicsLanding');
     if(snap.exists()){
       const d=snap.data();
       if(d.title) TOPICS_HERO.title=d.title;
@@ -4564,7 +4757,7 @@ window.saveTopicsHeroContent=async function(){
   const title=document.getElementById('topicsHeroTitleInput').value.trim()||'Browse by topic';
   const body=document.getElementById('topicsHeroBodyInput').value.trim();
   showSaving(true);
-  try{ await setDoc(doc(db,'siteContent','topicsLanding'),{title,body},{merge:true}); }
+  try{ await setDoc(doc(db,'siteContent','topicsLanding'),{title,body},{merge:true}); siteContentChanged(); }
   catch(err){ console.error('saveTopicsHeroContent failed:',err); showToast('⚠ Could not save. Try again.'); showSaving(false); return; }
   showSaving(false);
   TOPICS_HERO.title=title; TOPICS_HERO.body=body;
@@ -4600,7 +4793,7 @@ let navDragSrc=null;
 
 async function loadNavOrder(){
   try{
-    const snap=await getDoc(doc(db,'siteContent','navOrder'));
+    const snap=await getSiteDoc('navOrder');
     if(snap.exists() && Array.isArray(snap.data().items) && snap.data().items.length){
       const saved=snap.data().items;
       // Ensure every fixed key is present even if the saved navOrder
@@ -4739,7 +4932,7 @@ async function reorderNavItems(srcKey, tgtKey){
   const newTgtIdx=NAV_ORDER.findIndex(e=>keyOf(e)===tgtKey);
   NAV_ORDER.splice(newTgtIdx,0,moved);
   showSaving(true);
-  try{ await setDoc(doc(db,'siteContent','navOrder'),{items:NAV_ORDER}); }
+  try{ await setDoc(doc(db,'siteContent','navOrder'),{items:NAV_ORDER}); siteContentChanged(); }
   catch(err){ console.error(err); showToast('⚠ Could not save nav order.'); }
   showSaving(false);
   renderHeaderNav();
@@ -5037,6 +5230,7 @@ window.selectWord=async function(id){
   renderDetail(w); // render immediately with whatever's cached (fast UI)
   document.getElementById('rightPanel')?.scrollTo(0,0);
   showMobileDetail(); // on mobile, slide from list to detail view
+  if(feedbackLoadedAt[id]) return; // already loaded this visit — no new reads
   await loadFeedbackForSign(id); // then refresh feedback async
   if(activeWord===id) renderDetail(w); // re-render only if still viewing same sign
 };
@@ -5203,14 +5397,14 @@ function renderDetail(w){
 /* ══ FEEDBACK SECTION (rating average + public comments + comment box) ══ */
 function renderFeedbackSection(w){
   const list = feedbackBySign[w.id] || [];
-  const rated = list.filter(f=>f._kind==='rating' && f.rating>0);
-  const avg = rated.length ? (rated.reduce((s,f)=>s+f.rating,0)/rated.length) : 0;
+  const stats = ratingStatsBySign[w.id] || {count:0, avg:0};
+  const avg = stats.avg;
   const avgRounded = Math.round(avg*10)/10;
 
   const avgStars = avg>0
     ? `<span class="fb-avg-stars">${'★'.repeat(Math.round(avg))}${'☆'.repeat(5-Math.round(avg))}</span>
        <span class="fb-avg-num">${avgRounded}</span>
-       <span class="fb-avg-count">(${rated.length} rating${rated.length===1?'':'s'})</span>`
+       <span class="fb-avg-count">(${stats.count} rating${stats.count===1?'':'s'})</span>`
     : `<span class="fb-avg-count">No ratings yet — be the first!</span>`;
 
   // Comments (written feedback only — _kind==='comment'). Public ones are
@@ -5465,7 +5659,7 @@ window.submitFeedback=async function(wId){
   document.getElementById(`fbText_${wId}`).value='';
   fbRating=0; fbType=''; updateStars(0,wId);
   document.querySelectorAll('#rightPanel .fb-type').forEach(el=>el.classList.remove('on'));
-  await loadFeedbackForSign(wId);
+  await loadFeedbackForSign(wId, true);
   if(activeWord===wId) renderDetail(w);
   showToast('Feedback submitted — thank you!');
 };
@@ -5490,7 +5684,7 @@ window.quickRate=async function(n,wId){
     return;
   }
   markRated(wId);
-  await loadFeedbackForSign(wId);
+  await loadFeedbackForSign(wId, true);
   if(activeWord===wId) renderDetail(w);
   showToast('Thanks for rating!');
 };
@@ -8598,7 +8792,41 @@ window.inlineAddCustom=async function(fieldId){
 };
 
 /* ══ HANDSHAPE IMAGE MANAGEMENT ══ */
+// Shows how much space the pictures take in the visitors' snapshot, with a
+// one-click fix when some were uploaded before pictures were resized.
+const HS_IMG_BIG_BYTES=70000;
+function renderHsImgSizeNote(){
+  const el=document.getElementById('hsImgSizeNote'); if(!el) return;
+  const total=HANDSHAPES.reduce((t,h)=>t+dataUrlBytes(h.image),0);
+  const big=HANDSHAPES.filter(h=>dataUrlBytes(h.image)>HS_IMG_BIG_BYTES);
+  if(!total){ el.style.display='none'; return; }
+  el.style.display='flex';
+  el.innerHTML=`<span><i class="ti ti-photo"></i> Pictures use <strong>${Math.round(total/1024)} KB</strong> of the visitors’ snapshot (whole snapshot doc limit ≈ 976 KB).${big.length?` <strong>${big.length}</strong> picture${big.length===1?' is':'s are'} larger than needed.`:''}</span>`
+    +(big.length?`<button class="btn" onclick="shrinkHandshapeImages()"><i class="ti ti-arrows-minimize"></i> Shrink images</button>`:'');
+}
+window.shrinkHandshapeImages=async function(){
+  const big=HANDSHAPES.filter(h=>dataUrlBytes(h.image)>HS_IMG_BIG_BYTES);
+  if(!big.length) return;
+  if(!confirm(`Resize ${big.length} handshape picture(s) to at most ${HS_IMG_MAX_SIDE} px? They are shown small on the site, so they will look the same.`)) return;
+  let done=0, saved=0;
+  snapshotWarnPaused=true; // each save rebuilds the snapshot; don't warn until all are done
+  showSaving(true);
+  for(const h of big){
+    try{
+      const small=await shrinkImageSrc(h.image);
+      if(small.length>=h.image.length) continue;
+      const before=h.image.length;
+      if(await updateValueDoc('handshapes',h.id,{image:small})){ h.image=small; done++; saved+=before-small.length; }
+    }catch(err){ console.error('shrink failed for',h.value,err); }
+  }
+  snapshotWarnPaused=false;
+  const ok=await regeneratePublicSnapshot(); // warns now if it's still too big
+  showSaving(false);
+  buildHsGrid(); renderHsMgGrid();
+  if(ok) showToast(done?`Shrunk ${done} picture(s), saved ${Math.round(saved/1024)} KB. Visitors' copy updated.`:'Nothing could be shrunk further.');
+};
 function renderHsMgGrid(){
+  renderHsImgSizeNote();
   const grid=document.getElementById('hsMgGrid'); grid.innerHTML='';
   let dragSrcId=null;
   HANDSHAPES.forEach(h=>{
@@ -8612,7 +8840,7 @@ function renderHsMgGrid(){
     const ul=document.createElement('label'); ul.className='hs-manage-upload';
     ul.innerHTML=`<i class="ti ti-upload" style="font-size:11px;margin-right:3px;"></i>${h.image?'Replace':'Upload'}`;
     const inp=document.createElement('input'); inp.type='file'; inp.accept='image/*'; inp.style.display='none';
-    inp.onchange=async e=>{ const f=e.target.files[0]; if(!f) return; const b64=await fileToB64(f); await updateValueDoc('handshapes',h.id,{image:b64}); h.image=b64; buildHsGrid(); renderHsMgGrid(); showToast(`Handshape ${h.value} updated`); };
+    inp.onchange=async e=>{ const f=e.target.files[0]; if(!f) return; await uploadHandshapeImage(h,f); };
     ul.appendChild(inp); cell.appendChild(ul);
     if(h.image){
       const rmImg=document.createElement('button'); rmImg.className='hs-manage-del'; rmImg.innerHTML='<i class="ti ti-photo-off" style="font-size:11px;margin-right:2px;"></i>Remove image';
@@ -8762,7 +8990,7 @@ window.deleteFeedback=async function(id,signId){
 
 /* ══ TOAST ══ */
 let toastTimer;
-window.showToast=function(msg){ const t=document.getElementById('toast'); t.textContent=msg; t.classList.add('show'); clearTimeout(toastTimer); toastTimer=setTimeout(()=>t.classList.remove('show'),2600); };
+window.showToast=function(msg, ms=2600){ const t=document.getElementById('toast'); t.textContent=msg; t.classList.add('show'); clearTimeout(toastTimer); toastTimer=setTimeout(()=>t.classList.remove('show'),ms); };
 
 document.addEventListener('keydown',e=>{ if(e.key==='Escape'){ closeFsModal(); closeEditModal(); closeDeleteModal(); hideEsNotice(); } });
 
@@ -8775,7 +9003,7 @@ let CONTACTS=[]; // cached for admin tab
 
 async function loadContactContent(){
   try{
-    const snap=await getDoc(doc(db,'siteContent','contact'));
+    const snap=await getSiteDoc('contact');
     if(snap.exists()){
       const d=snap.data();
       if(d.title) CONTACT_CONTENT.title=d.title;
@@ -8820,6 +9048,7 @@ window.saveContactContent=async function(){
   try{
     await setDoc(doc(db,'siteContent','contact'),{title,body},{merge:true});
     if(label!==CONTACT_TAB_LABEL) await setDoc(doc(db,'siteContent','aboutContact'),{label},{merge:true});
+    siteContentChanged();
   }
   catch(err){ console.error('saveContactContent failed:',err); showToast('⚠ Could not save ('+(err&&err.code?err.code:'error')+').'); showSaving(false); return; }
   showSaving(false);
@@ -9024,7 +9253,10 @@ async function init(){
   // The dictionary snapshot and the 4 siteContent docs don't depend on each other, so they
   // are fetched at the same time (used to be one after the other = an extra round-trip).
   dataLoadedPromise = loadAllPublic();
-  const siteContentPromise = Promise.all([loadAboutContent(), loadContactContent(), loadTopicsHeroContent(), loadNavOrder()]);
+  // One read for all About/Contact/nav content (publicSnapshot/site); each loader
+  // below then reads from that bundle, or straight from siteContent if it's missing.
+  siteSnapshotLoaded = loadSiteSnapshot();
+  const siteContentPromise = siteSnapshotLoaded.then(()=>Promise.all([loadAboutContent(), loadContactContent(), loadTopicsHeroContent(), loadNavOrder()]));
   try{ await dataLoadedPromise; }
   catch(e){ console.error(e); showToast('⚠ Firebase connection error. Check your config and Firestore rules.'); }
   try{ await siteContentPromise; }
@@ -9210,8 +9442,36 @@ function forceRepaint(){
   window.scrollTo(0,0);
   document.body.style.display='none'; document.body.offsetHeight; document.body.style.display='';
 }
+// The repaint trick above scrolls to the top (and hiding <body> resets the
+// inner scroll areas), which threw a student back to the top of the list or
+// the sign page on every rotation. Remember where each area was — as a
+// fraction of its scrollable height, since the layout changes width — and
+// put it back once the fix-up is finished.
+const ROTATE_SCROLL_IDS=['wordList','rightPanel'];
+function captureScroll(){
+  const frac=el=>{ const max=el.scrollHeight-el.clientHeight; return max>0 ? el.scrollTop/max : 0; };
+  const se=document.scrollingElement||document.documentElement;
+  const out={page:frac(se)};
+  ROTATE_SCROLL_IDS.forEach(id=>{ const el=document.getElementById(id); if(el) out[id]=frac(el); });
+  return out;
+}
+function restoreScroll(pos){
+  if(!pos) return;
+  const put=(el,f)=>{ const max=el.scrollHeight-el.clientHeight; if(max>0) el.scrollTop=Math.round(f*max); };
+  ROTATE_SCROLL_IDS.forEach(id=>{ const el=document.getElementById(id); if(el && pos[id]!=null) put(el,pos[id]); });
+  put(document.scrollingElement||document.documentElement, pos.page||0);
+}
+// Keep a fresh copy of the positions while the user scrolls: by the time
+// 'orientationchange' fires, some browsers have already re-laid-out the page.
+let lastScrollPos=null, scrollPosTimer=null;
+function noteScroll(){ clearTimeout(scrollPosTimer); scrollPosTimer=setTimeout(()=>{ if(!rotationBusy) lastScrollPos=captureScroll(); },120); }
+let rotationBusy=false;
+window.addEventListener('scroll', noteScroll, {passive:true});
+document.addEventListener('scroll', e=>{ if(e.target && ROTATE_SCROLL_IDS.includes(e.target.id)) noteScroll(); }, {capture:true, passive:true});
 window.addEventListener('orientationchange',()=>{
   const myToken = ++rotationToken;
+  const savedPos = lastScrollPos || captureScroll();
+  rotationBusy=true;
   setTimeout(()=>{
     if(myToken!==rotationToken) return; // a newer rotation already superseded this one
     const nav=document.getElementById('headerNav');
@@ -9229,6 +9489,7 @@ window.addEventListener('orientationchange',()=>{
       // The full zoom/repaint fix-up simply runs next time they rotate
       // with the menu closed (including right after they close it).
       window.scrollTo(0,0);
+      rotationBusy=false;
       return;
     }
     const vp = document.querySelector('meta[name="viewport"]');
@@ -9238,6 +9499,13 @@ window.addEventListener('orientationchange',()=>{
       if(myToken!==rotationToken) return;
       if(vp) vp.setAttribute('content', ORIGINAL_VIEWPORT_CONTENT);
       forceRepaint();
+      // Wait one frame so the new layout has its final heights, then go back.
+      requestAnimationFrame(()=>{
+        if(myToken!==rotationToken) return;
+        restoreScroll(savedPos);
+        rotationBusy=false;
+        lastScrollPos=captureScroll();
+      });
     }, 120);
   },50);
 });
