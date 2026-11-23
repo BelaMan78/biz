@@ -4577,10 +4577,35 @@ let acFocusIndex=-1;
 // Accent/case-insensitive comparison key ("senal" finds "señal"). Folds per character so the
 // string length never changes and highlightMatch() can keep using index positions.
 function foldText(s){ return Array.from(String(s??'')).map(c=>c.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase()).join(''); }
+// Search ranking: 0 = exact, 1 = starts with the query ("PAY" → PAYBACK PERIOD, PAYCHECK…),
+// 2 = a later word starts with it (DOWN PAYMENT), 3 = contains it anywhere (AUTOPAY, COPAY),
+// 4 = only the other language matches. Same rank → A–Z.
+function searchRankText(text,ql){
+  const t=foldText(text); if(!t) return 9;
+  if(t===ql) return 0;
+  if(t.startsWith(ql)) return 1;
+  if(t.split(/[^a-z0-9]+/).some(part=>part.startsWith(ql))) return 2;
+  if(t.includes(ql)) return 3;
+  return 9;
+}
+function searchRank(w,ql){
+  const primary=(currentLang==='es'&&w.es)?w.es:w.en;
+  const other=(currentLang==='es'&&w.es)?w.en:w.es;
+  const r=searchRankText(primary,ql);
+  if(r<9) return r;
+  return searchRankText(other,ql)<9 ? 4 : 9;
+}
+function sortBySearchRank(list,ql){
+  const label=w=>(currentLang==='es'&&w.es)?w.es:w.en;
+  return list.map(w=>({w,r:searchRank(w,ql)}))
+    .sort((a,b)=>a.r-b.r || String(label(a.w)).localeCompare(String(label(b.w)),undefined,{sensitivity:'base'}))
+    .map(x=>x.w);
+}
 function buildAcItems(q){
   if(!q || q.length<1) return [];
   const ql=foldText(q);
-  return visibleWords().filter(w=>foldText(w.en).includes(ql)||foldText(w.es).includes(ql))
+  const matches=visibleWords().filter(w=>foldText(w.en).includes(ql)||foldText(w.es).includes(ql));
+  return sortBySearchRank(matches,ql)
     .slice(0,10)
     .map(w=>{
       const showEs=currentLang==='es'&&w.es;
@@ -4686,6 +4711,8 @@ window.doFilter=function(){
     const bv=(currentLang==='es'&&b.es)?b.es:b.en;
     return av.localeCompare(bv,undefined,{sensitivity:'base'});
   });
+  const searchQ=foldText((document.getElementById('globalSearch')?.value||'').trim());
+  if(searchQ){ const ranked=sortBySearchRank(list,searchQ); list.length=0; list.push(...ranked); }
 
   document.getElementById('resultCount').textContent=list.length===words.length?`${list.length} signs`:`${list.length} of ${words.length} signs`;
   filteredWordList=list;
@@ -5343,7 +5370,7 @@ function buildChips(containerId, values, selected, onToggle, singleSelect=false)
   });
 }
 
-/* ══ AUTO-SUGGEST TOPIC (keyword match on English name + YouTube oEmbed title) ══ */
+/* ══ AUTO-SUGGEST TOPIC — older keyword tables (exact-match fallback for non-BUS250 words; BUS250 terms use BUSterm.xlsx below) ══ */
 // Generated from Financial_Literacy_Glossary_Chapter_Allocation_Expanded.xlsx
 // ("Allocated Terms" sheet: Term -> Chapter Title, 463 terms across 15 chapters).
 // Topic name = chapter title; any topic not already in your Topics collection
@@ -6523,21 +6550,582 @@ const BUSINESS_ES_GLOSSARY = {
   'values':'valores',
 };
 
-// Only fills fEs if it's still empty — never overwrites a value an admin
-// already typed or already reviewed. Silent no-op (no toast) when the
-// English term isn't in the glossary, so it doesn't nag on every sign that
-// isn't covered yet; the admin just types the Spanish in manually as before.
-function suggestSpanishFromInputs(){
-  const enEl=document.getElementById('fEn');
-  const esEl=document.getElementById('fEs');
-  if(!enEl || !esEl || esEl.value.trim()) return false;
-  const key=enEl.value.trim().toLowerCase().replace(/\s*\([^)]*\)\s*/g,' ').replace(/\s+/g,' ').trim(); // parentheses → space, so "401(k) plan" → "401 plan" (was "401plan")
-  const match=BUSINESS_ES_GLOSSARY[key];
-  if(!match) return false;
-  esEl.value=match;
-  showToast('Spanish auto-filled from glossary draft — please verify before saving');
-  return true;
+/* ══ BUS250 GLOSSARY (from BUSterm.xlsx) — exact Topic / Category / Spanish / Book auto-fill ══ */
+// Source of truth for every BUS250 term: which chapter(s) it belongs to and its Spanish
+// translation. Matching is EXACT (case/accent-insensitive, parentheses optional, acronym
+// alone also works: "CPI", "consumer price index", "Consumer Price Index (CPI)" all match),
+// so "PAYDAY LOAN" no longer gets random topics just because it contains the word "loan".
+//   Topic    = chapter title (without the "Chapter N-" prefix, same names as before)
+//   Category = CHAPTER_TO_CATEGORY[chapter title]
+//   Book     = BUS250 book in your "Book" category, chapter card = the xlsx chapter header
+// Spanish translations are a draft — please have a bilingual reviewer check them.
+const BUS250_CHAPTER_HEADERS = [
+  "Chapter 1-Understanding the Financial Planning Process",
+  "Chapter 2-Using Financial Statements and Budgets",
+  "Chapter 3-Preparing your taxes",
+  "Chapter 4-Managing Your Cash and Savings",
+  "Chapter 5-Making Automobile and Housing Decisions",
+  "Chapter 6-Using Credit",
+  "Chapter 7-Using Consumer Loans",
+  "Chapter 8-Insuring Your Life",
+  "Chapter 9-Protecting Your Health",
+  "Chapter 10-Insuring Your Property",
+  "Chapter 11-Investment Planning",
+  "Chapter 12-Investing in Stocks and Bonds",
+  "Chapter 13-Investing in Mutual Funds, ETFs, and Real Estate",
+  "Chapter 14-Planning for Retirement",
+  "Chapter 15-Preserving Your Estate"
+];
+// [term, [chapter numbers 1-15], Spanish]
+const BUS250_TERMS = [
+  ["average propensity to consume", [1], "propensión media al consumo"],
+  ["consumer price index (CPI)", [1], "índice de precios al consumidor (IPC)"],
+  ["contraction", [1], "contracción"],
+  ["expansion", [1], "expansión"],
+  ["financial assets", [1], "activos financieros"],
+  ["financial goals", [1], "metas financieras"],
+  ["flexible-benefit (cafeteria) plan", [1], "plan de beneficios flexibles (plan cafetería)"],
+  ["goal dates", [1], "fechas meta"],
+  ["gross domestic product (GDP)", [1], "producto interno bruto (PIB)"],
+  ["inflation", [1], "inflación"],
+  ["money", [1], "dinero"],
+  ["peak", [1], "pico"],
+  ["personal financial planning", [1], "planificación financiera personal"],
+  ["professional financial planners", [1], "planificadores financieros profesionales"],
+  ["standard of living", [1], "nivel de vida"],
+  ["tangible assets", [1], "activos tangibles"],
+  ["annuity", [2, 14], "anualidad"],
+  ["assets", [2], "activos"],
+  ["balance sheet", [2], "balance general"],
+  ["budgets", [2], "presupuestos"],
+  ["budget control schedule", [2], "cronograma de control presupuestario"],
+  ["budget variance", [2], "variación del presupuesto"],
+  ["cash basis", [2], "base de efectivo"],
+  ["cash budget", [2], "presupuesto de efectivo"],
+  ["cash deficit", [2], "déficit de efectivo"],
+  ["cash surplus", [2], "superávit de efectivo"],
+  ["compounding", [2], "capitalización"],
+  ["current (short-term) liability", [2], "pasivo corriente (a corto plazo)"],
+  ["debt service ratio", [2], "índice de servicio de la deuda"],
+  ["discounting", [2], "descuento"],
+  ["equity", [2], "patrimonio"],
+  ["expenses", [2], "gastos"],
+  ["fair market value", [2], "valor justo de mercado"],
+  ["financial plans", [2], "planes financieros"],
+  ["fixed expenses", [2], "gastos fijos"],
+  ["future value", [2], "valor futuro"],
+  ["income", [2], "ingresos"],
+  ["income and expense statement", [2], "estado de ingresos y gastos"],
+  ["insolvency", [2], "insolvencia"],
+  ["investments", [2], "inversiones"],
+  ["liabilities", [2], "pasivos"],
+  ["liquid assets", [2], "activos líquidos"],
+  ["liquidity ratio", [2], "índice de liquidez"],
+  ["long-term liability", [2], "pasivo a largo plazo"],
+  ["net worth", [2], "patrimonio neto"],
+  ["open account credit obligations", [2], "obligaciones de crédito en cuenta abierta"],
+  ["personal financial statements", [2], "estados financieros personales"],
+  ["personal property", [2], "bienes muebles"],
+  ["present value", [2], "valor presente"],
+  ["real property", [2], "bienes inmuebles"],
+  ["real rate of return", [2], "tasa de rendimiento real"],
+  ["rule of 72", [2], "regla del 72"],
+  ["savings ratio", [2], "índice de ahorro"],
+  ["solvency ratio", [2], "índice de solvencia"],
+  ["time value of money", [2], "valor del dinero en el tiempo"],
+  ["variable expenses", [2], "gastos variables"],
+  ["adjusted gross income (AGI)", [3], "ingreso bruto ajustado (AGI)"],
+  ["adjustments to gross income", [3], "ajustes al ingreso bruto"],
+  ["amended return", [3], "declaración enmendada"],
+  ["average tax rate", [3], "tasa impositiva promedio"],
+  ["estimated taxes", [3], "impuestos estimados"],
+  ["exemptions", [3], "exenciones"],
+  ["Federal Insurance Contributions Act (FICA) or social security tax", [3], "Ley de Contribuciones al Seguro Federal (FICA) o impuesto del seguro social"],
+  ["federal withholding taxes", [3], "retenciones del impuesto federal"],
+  ["gross income", [3], "ingreso bruto"],
+  ["income shifting", [3], "traslado de ingresos"],
+  ["income taxes", [3], "impuestos sobre la renta"],
+  ["itemized deductions", [3], "deducciones detalladas"],
+  ["marginal tax rate", [3], "tasa impositiva marginal"],
+  ["progressive tax structure", [3], "estructura tributaria progresiva"],
+  ["standard deduction", [3], "deducción estándar"],
+  ["taxable income", [3], "ingreso gravable"],
+  ["taxes", [3], "impuestos"],
+  ["tax audit", [3], "auditoría fiscal"],
+  ["tax avoidance", [3], "elusión fiscal"],
+  ["tax credits", [3], "créditos fiscales"],
+  ["tax deferred", [3], "con impuestos diferidos"],
+  ["tax evasion", [3], "evasión fiscal"],
+  ["account reconciliation", [4], "conciliación de cuentas"],
+  ["asset management account (AMA)", [4], "cuenta de administración de activos (AMA)"],
+  ["automated teller machines (ATMs)", [4], "cajeros automáticos (ATM)"],
+  ["cash management", [4], "administración del efectivo"],
+  ["cashier’s check", [4], "cheque de caja"],
+  ["certificates of deposit (CDs)", [4], "certificados de depósito (CD)"],
+  ["certified check", [4], "cheque certificado"],
+  ["checkbook ledger", [4], "registro de chequera"],
+  ["compound interest", [4], "interés compuesto"],
+  ["debit cards", [4], "tarjetas de débito"],
+  ["demand deposit", [4], "depósito a la vista"],
+  ["deposit insurance", [4], "seguro de depósitos"],
+  ["effective rate of interest", [4], "tasa de interés efectiva"],
+  ["electronic funds transfer systems (EFTSs)", [4], "sistemas de transferencia electrónica de fondos (EFTS)"],
+  ["I savings bonds", [4], "bonos de ahorro serie I"],
+  ["internet or digital banks", [4], "bancos por internet o digitales"],
+  ["money market deposit account (MMDA)", [4], "cuenta de depósito del mercado monetario (MMDA)"],
+  ["money market mutual fund (MMMF)", [4], "fondo mutuo del mercado monetario (MMMF)"],
+  ["negotiable order of withdrawal (NOW) account", [4], "cuenta de orden negociable de retiro (NOW)"],
+  ["nominal (stated) rate of interest", [4], "tasa de interés nominal (declarada)"],
+  ["overdraft", [4], "sobregiro"],
+  ["overdraft protection", [4], "protección contra sobregiros"],
+  ["series EE bonds", [4], "bonos serie EE"],
+  ["share draft accounts", [4], "cuentas de giro de acciones"],
+  ["simple interest", [4], "interés simple"],
+  ["stop payment", [4], "orden de suspensión de pago"],
+  ["time deposits", [4], "depósitos a plazo"],
+  ["traveler’s check", [4], "cheque de viajero"],
+  ["U.S. Treasury bill (T-bill)", [4], "letra del Tesoro de EE. UU. (T-bill)"],
+  ["adjustable-rate mortgage (ARM)", [5], "hipoteca de tasa ajustable (ARM)"],
+  ["adjustment period", [5], "período de ajuste"],
+  ["anchoring", [5], "anclaje"],
+  ["balloon-payment mortgage", [5], "hipoteca con pago global final"],
+  ["biweekly mortgage", [5], "hipoteca quincenal"],
+  ["buydown", [5], "reducción de tasa prepagada"],
+  ["capitalized cost", [5], "costo capitalizado"],
+  ["closed-end lease", [5], "arrendamiento cerrado"],
+  ["closing costs", [5], "costos de cierre"],
+  ["condominium (condo)", [5], "condominio"],
+  ["contingency clause", [5], "cláusula de contingencia"],
+  ["conventional mortgage", [5], "hipoteca convencional"],
+  ["convertible ARM", [5], "hipoteca de tasa ajustable convertible"],
+  ["cooperative apartment (co-op)", [5], "apartamento cooperativo"],
+  ["depreciation", [5], "depreciación"],
+  ["down payment", [5], "pago inicial"],
+  ["earnest money deposit", [5], "depósito de garantía"],
+  ["FHA mortgage insurance", [5], "seguro hipotecario de la FHA"],
+  ["fixed-rate mortgage", [5], "hipoteca de tasa fija"],
+  ["foreclosure", [5], "ejecución hipotecaria"],
+  ["graduated-payment mortgage", [5], "hipoteca de pagos graduados"],
+  ["growing-equity mortgage", [5], "hipoteca de capital creciente"],
+  ["homeowner’s insurance", [5], "seguro de propietario de vivienda"],
+  ["index rate", [5], "tasa índice"],
+  ["interest-only mortgage", [5], "hipoteca de solo intereses"],
+  ["interest rate cap", [5], "límite de tasa de interés"],
+  ["lease", [5], "arrendamiento"],
+  ["loan-to-value ratio", [5], "relación préstamo-valor"],
+  ["margin", [5], "margen"],
+  ["money factor", [5], "factor monetario"],
+  ["mortgage banker", [5], "banquero hipotecario"],
+  ["mortgage broker", [5], "corredor hipotecario"],
+  ["mortgage loan", [5], "préstamo hipotecario"],
+  ["mortgage points", [5], "puntos hipotecarios"],
+  ["Multiple Listing Service (MLS)", [5], "Servicio de Listado Múltiple (MLS)"],
+  ["negative amortization", [5], "amortización negativa"],
+  ["open-end (finance) lease", [5], "arrendamiento abierto (financiero)"],
+  ["payment cap", [5], "límite de pago"],
+  ["PITI", [5], "PITI (capital, intereses, impuestos y seguro)"],
+  ["prequalification", [5], "precalificación"],
+  ["private mortgage insurance (PMI)", [5], "seguro hipotecario privado (PMI)"],
+  ["property taxes", [5], "impuestos sobre la propiedad"],
+  ["purchase option", [5], "opción de compra"],
+  ["Real Estate Settlement Procedures Act (RESPA)", [5], "Ley de Procedimientos de Liquidación de Bienes Raíces (RESPA)"],
+  ["real estate short sale", [5], "venta corta de bienes raíces"],
+  ["rental contract lease agreement", [5], "contrato de alquiler o arrendamiento"],
+  ["residual value", [5], "valor residual"],
+  ["sales contract", [5], "contrato de compraventa"],
+  ["shared-appreciation mortgage", [5], "hipoteca de plusvalía compartida"],
+  ["title check", [5], "verificación de título"],
+  ["two-step ARM", [5], "hipoteca de tasa ajustable de dos etapas"],
+  ["VA loan guarantees", [5], "garantías de préstamo del VA"],
+  ["affinity card", [6], "tarjeta de afinidad"],
+  ["annual percentage rate (APR)", [6], "tasa de porcentaje anual (APR)"],
+  ["average daily balance (ADB) method", [6], "método del saldo diario promedio (ADB)"],
+  ["balance transfer", [6], "transferencia de saldo"],
+  ["bank credit card", [6], "tarjeta de crédito bancaria"],
+  ["base rate", [6], "tasa base"],
+  ["cash advance", [6], "adelanto en efectivo"],
+  ["credit bureau", [6], "buró de crédito"],
+  ["credit counselor", [6], "asesor de crédito"],
+  ["credit investigation", [6], "investigación de crédito"],
+  ["credit limit", [6], "límite de crédito"],
+  ["credit scoring", [6], "calificación crediticia"],
+  ["credit statement", [6], "estado de cuenta de crédito"],
+  ["debt safety ratio", [6], "índice de seguridad de la deuda"],
+  ["grace period", [6], "período de gracia"],
+  ["home equity credit line (HELOC)", [6], "línea de crédito sobre el valor líquido de la vivienda (HELOC)"],
+  ["line of credit", [6], "línea de crédito"],
+  ["minimum monthly payment", [6], "pago mínimo mensual"],
+  ["open account credit", [6], "crédito en cuenta abierta"],
+  ["overdraft protection line", [6], "línea de protección contra sobregiros"],
+  ["personal bankruptcy", [6], "bancarrota personal"],
+  ["prepaid card", [6], "tarjeta prepagada"],
+  ["retail charge card", [6], "tarjeta de cargo de tienda"],
+  ["revolving lines of credit", [6], "líneas de crédito rotativo"],
+  ["reward (co-branded) credit card", [6], "tarjeta de crédito de recompensas (de marca compartida)"],
+  ["secured (collateralized) credit cards", [6], "tarjetas de crédito garantizadas"],
+  ["straight bankruptcy", [6], "bancarrota por liquidación"],
+  ["student credit card", [6], "tarjeta de crédito para estudiantes"],
+  ["unsecured personal credit line", [6], "línea de crédito personal sin garantía"],
+  ["Wage Earner Plan", [6], "plan para asalariados"],
+  ["529 college savings plan", [7], "plan de ahorro universitario 529"],
+  ["add-on method", [7], "método de interés agregado"],
+  ["captive finance company", [7], "financiera cautiva"],
+  ["cash value (of life insurance)", [7], "valor en efectivo (del seguro de vida)"],
+  ["chattel mortgage", [7], "hipoteca mobiliaria"],
+  ["collateral note", [7], "pagaré con garantía"],
+  ["collateral", [7], "garantía"],
+  ["consumer finance company", [7], "compañía financiera de consumo"],
+  ["consumer loans", [7], "préstamos de consumo"],
+  ["credit life (or disability) insurance", [7], "seguro de vida (o de discapacidad) sobre crédito"],
+  ["discount method", [7], "método de descuento"],
+  ["installment loan", [7], "préstamo a plazos"],
+  ["interim financing", [7], "financiamiento provisional"],
+  ["lien", [7], "gravamen"],
+  ["loan application", [7], "solicitud de préstamo"],
+  ["loan disclosure statement", [7], "declaración de divulgación del préstamo"],
+  ["loan rollover", [7], "renovación del préstamo"],
+  ["prepayment penalty", [7], "penalización por pago anticipado"],
+  ["Rule of 78s (sum-of-the-digits method)", [7], "regla del 78 (método de la suma de dígitos)"],
+  ["sales finance company", [7], "compañía de financiamiento de ventas"],
+  ["simple interest method", [7], "método de interés simple"],
+  ["single-payment loan", [7], "préstamo de pago único"],
+  ["beneficiary", [8], "beneficiario"],
+  ["cash value", [8], "valor en efectivo"],
+  ["convertibility", [8], "convertibilidad"],
+  ["credit life insurance", [8], "seguro de vida sobre crédito"],
+  ["decreasing term policy", [8], "póliza a término decreciente"],
+  ["disability clause", [8], "cláusula de discapacidad"],
+  ["group life insurance", [8], "seguro de vida grupal"],
+  ["guaranteed purchase option", [8], "opción de compra garantizada"],
+  ["industrial life insurance (home service life insurance)", [8], "seguro de vida industrial (seguro de vida con servicio a domicilio)"],
+  ["insurance policy", [8], "póliza de seguro"],
+  ["life insurance policy illustration", [8], "ilustración de póliza de seguro de vida"],
+  ["loss control", [8], "control de pérdidas"],
+  ["loss prevention", [8], "prevención de pérdidas"],
+  ["mortgage life insurance", [8], "seguro de vida hipotecario"],
+  ["multiple indemnity clause", [8], "cláusula de indemnización múltiple"],
+  ["multiple-of-earnings method", [8], "método de múltiplo de ingresos"],
+  ["needs analysis method", [8], "método de análisis de necesidades"],
+  ["nonforfeiture right", [8], "derecho de no caducidad"],
+  ["participating policy", [8], "póliza con participación"],
+  ["policy loan", [8], "préstamo sobre póliza"],
+  ["portability", [8], "portabilidad"],
+  ["premium offset", [8], "compensación de primas"],
+  ["renewability", [8], "renovabilidad"],
+  ["risk assumption", [8], "asunción del riesgo"],
+  ["risk avoidance", [8], "evitación del riesgo"],
+  ["Social Security survivor’s benefits", [8], "beneficios de sobreviviente del Seguro Social"],
+  ["straight term policy", [8], "póliza a término nivelado"],
+  ["term life insurance", [8], "seguro de vida a término"],
+  ["underwriting", [8], "suscripción"],
+  ["universal life insurance", [8], "seguro de vida universal"],
+  ["variable life insurance", [8], "seguro de vida variable"],
+  ["whole life insurance", [8], "seguro de vida entera"],
+  ["Blue Cross/Blue Shield plans", [9], "planes Blue Cross/Blue Shield"],
+  ["community rating approach to health insurance premium pricing", [9], "tarificación comunitaria de primas de seguro médico"],
+  ["comprehensive major medical insurance", [9], "seguro médico mayor integral"],
+  ["Consolidated Omnibus Budget Reconciliation Act (COBRA)", [9], "Ley Ómnibus Consolidada de Reconciliación Presupuestaria (COBRA)"],
+  ["coordination of benefits provision", [9], "disposición de coordinación de beneficios"],
+  ["deductible", [9], "deducible"],
+  ["disability income insurance", [9], "seguro de ingresos por discapacidad"],
+  ["exclusive provider organization (EPO)", [9], "organización de proveedores exclusivos (EPO)"],
+  ["flexible spending account (FSA)", [9], "cuenta de gastos flexibles (FSA)"],
+  ["group health insurance", [9], "seguro médico grupal"],
+  ["group HMO", [9], "HMO grupal"],
+  ["guaranteed renewability", [9], "renovabilidad garantizada"],
+  ["health maintenance organization (HMO)", [9], "organización para el mantenimiento de la salud (HMO)"],
+  ["health reimbursement account (HRA)", [9], "cuenta de reembolso de salud (HRA)"],
+  ["health savings account (HSA)", [9], "cuenta de ahorros para la salud (HSA)"],
+  ["indemnity (fee-for-service) plan", [9], "plan de indemnización (pago por servicio)"],
+  ["individual practice association (IPA)", [9], "asociación de práctica individual (IPA)"],
+  ["internal limits", [9], "límites internos"],
+  ["long-term care", [9], "cuidado a largo plazo"],
+  ["major medical plan", [9], "plan médico mayor"],
+  ["managed care plan", [9], "plan de atención administrada"],
+  ["Medicaid", [9], "Medicaid"],
+  ["Medicare", [9], "Medicare"],
+  ["Medicare Advantage plans", [9], "planes Medicare Advantage"],
+  ["optional renewability", [9], "renovabilidad opcional"],
+  ["participation (co-insurance) clause", [9], "cláusula de participación (coseguro)"],
+  ["Patient Protection and Affordable Care Act and Reconciliation Act of 2010 (ACA)", [9], "Ley de Protección al Paciente y Cuidado de Salud Asequible y Ley de Reconciliación de 2010 (ACA)"],
+  ["point-of-service (POS) plan", [9], "plan de punto de servicio (POS)"],
+  ["pre-existing condition clause", [9], "cláusula de condiciones preexistentes"],
+  ["preferred provider organization (PPO)", [9], "organización de proveedores preferidos (PPO)"],
+  ["prescription drug coverage", [9], "cobertura de medicamentos recetados"],
+  ["supplementary medical insurance (SMI)", [9], "seguro médico complementario (SMI)"],
+  ["waiting period", [9], "período de espera"],
+  ["workers’ compensation insurance", [9], "seguro de compensación laboral"],
+  ["actual cash value", [10], "valor real en efectivo"],
+  ["automobile insurance plan", [10], "plan de seguro de automóvil"],
+  ["bodily injury liability losses", [10], "pérdidas por responsabilidad civil por lesiones corporales"],
+  ["captive agent", [10], "agente cautivo"],
+  ["claims adjustor", [10], "ajustador de reclamos"],
+  ["co-insurance", [10], "coseguro"],
+  ["collision insurance", [10], "seguro contra colisión"],
+  ["comprehensive automobile insurance", [10], "seguro de automóvil a todo riesgo"],
+  ["comprehensive policy", [10], "póliza integral"],
+  ["financial responsibility laws", [10], "leyes de responsabilidad financiera"],
+  ["independent agent", [10], "agente independiente"],
+  ["liability insurance", [10], "seguro de responsabilidad civil"],
+  ["named peril policy", [10], "póliza de riesgos nombrados"],
+  ["negligence", [10], "negligencia"],
+  ["no-fault automobile insurance", [10], "seguro de automóvil sin culpa"],
+  ["peril", [10], "peligro"],
+  ["personal automobile policy (PAP)", [10], "póliza de automóvil personal (PAP)"],
+  ["personal liability umbrella policy", [10], "póliza paraguas de responsabilidad civil personal"],
+  ["personal property floater (PPF)", [10], "cobertura adicional para bienes personales (PPF)"],
+  ["principle of indemnity", [10], "principio de indemnización"],
+  ["property damage liability losses", [10], "pérdidas por responsabilidad civil por daños a la propiedad"],
+  ["property insurance", [10], "seguro de propiedad"],
+  ["replacement cost", [10], "costo de reposición"],
+  ["right of subrogation", [10], "derecho de subrogación"],
+  ["underinsured motorists coverage", [10], "cobertura contra conductores con seguro insuficiente"],
+  ["uninsured motorists coverage", [10], "cobertura contra conductores sin seguro"],
+  ["annual stockholders’ report", [11], "informe anual a los accionistas"],
+  ["arbitration", [11], "arbitraje"],
+  ["ask price", [11], "precio de venta"],
+  ["asset allocation", [11], "asignación de activos"],
+  ["bear market", [11], "mercado bajista"],
+  ["bid price", [11], "precio de compra"],
+  ["bull market", [11], "mercado alcista"],
+  ["day trader", [11], "operador intradía"],
+  ["discount broker", [11], "corredor de descuento"],
+  ["diversification", [11], "diversificación"],
+  ["Dow Jones Industrial Average (DJIA)", [11], "Promedio Industrial Dow Jones (DJIA)"],
+  ["Dow Jones Wilshire 5000 index", [11], "índice Dow Jones Wilshire 5000"],
+  ["fractional stock trades", [11], "operaciones con acciones fraccionadas"],
+  ["full-service broker", [11], "corredor de servicio completo"],
+  ["investing", [11], "invertir"],
+  ["investment plan", [11], "plan de inversión"],
+  ["limit order", [11], "orden limitada"],
+  ["market order", [11], "orden de mercado"],
+  ["National Association of Securities Dealers (NASD)", [11], "Asociación Nacional de Agentes de Valores (NASD)"],
+  ["NYSE index", [11], "índice NYSE"],
+  ["odd lot", [11], "lote irregular"],
+  ["online broker", [11], "corredor en línea"],
+  ["portfolio", [11], "cartera"],
+  ["prospectus", [11], "prospecto"],
+  ["rate of return", [11], "tasa de rendimiento"],
+  ["risk averse", [11], "adverso al riesgo"],
+  ["round lot", [11], "lote redondo"],
+  ["Securities and Exchange Commission (SEC)", [11], "Comisión de Bolsa y Valores (SEC)"],
+  ["Securities Investor Protection Corporation (SIPC)", [11], "Corporación de Protección al Inversionista en Valores (SIPC)"],
+  ["securities markets", [11], "mercados de valores"],
+  ["short sale", [11], "venta en corto"],
+  ["speculating", [11], "especular"],
+  ["Standard & Poor’s (S&P) indexes", [11], "índices Standard & Poor’s (S&P)"],
+  ["stockbroker (account executive, financial consultant)", [11], "corredor de bolsa (ejecutivo de cuenta, consultor financiero)"],
+  ["stop-loss (stop order)", [11], "orden de límite de pérdidas (orden stop)"],
+  ["accrued interest", [12], "interés acumulado"],
+  ["agency bond", [12], "bono de agencia"],
+  ["beta", [12], "beta"],
+  ["blue-chip stock", [12], "acción de primera línea"],
+  ["book value", [12], "valor en libros"],
+  ["business risk", [12], "riesgo empresarial"],
+  ["call feature", [12], "cláusula de rescate anticipado"],
+  ["clean price", [12], "precio limpio"],
+  ["conversion premium", [12], "prima de conversión"],
+  ["conversion privilege", [12], "privilegio de conversión"],
+  ["conversion ratio", [12], "tasa de conversión"],
+  ["conversion value", [12], "valor de conversión"],
+  ["corporate bond", [12], "bono corporativo"],
+  ["coupon", [12], "cupón"],
+  ["current yield", [12], "rendimiento corriente"],
+  ["cyclical stock", [12], "acción cíclica"],
+  ["debenture", [12], "obligación sin garantía"],
+  ["defensive stock", [12], "acción defensiva"],
+  ["dirty (full) price", [12], "precio sucio (completo)"],
+  ["discount bond", [12], "bono con descuento"],
+  ["dividend reinvestment plan (DRP)", [12], "plan de reinversión de dividendos (DRP)"],
+  ["dividend yield", [12], "rendimiento por dividendos"],
+  ["dollar cost averaging", [12], "promedio de costo en dólares"],
+  ["earnings per share (EPS)", [12], "ganancias por acción (EPS)"],
+  ["equipment trust certificate", [12], "certificado de fideicomiso de equipo"],
+  ["event risk", [12], "riesgo de evento"],
+  ["financial risk", [12], "riesgo financiero"],
+  ["fixed-income securities", [12], "valores de renta fija"],
+  ["fully taxable equivalent yield", [12], "rendimiento equivalente totalmente gravable"],
+  ["general obligation bond", [12], "bono de obligación general"],
+  ["growth stock", [12], "acción de crecimiento"],
+  ["income stock", [12], "acción de ingresos"],
+  ["interest rate risk", [12], "riesgo de tasa de interés"],
+  ["junk bond", [12], "bono basura"],
+  ["large-cap stock", [12], "acción de gran capitalización"],
+  ["liquidity risk", [12], "riesgo de liquidez"],
+  ["market risk", [12], "riesgo de mercado"],
+  ["mid-cap stock", [12], "acción de mediana capitalización"],
+  ["mortgage-backed securities", [12], "valores respaldados por hipotecas"],
+  ["mortgage bond", [12], "bono hipotecario"],
+  ["municipal bond", [12], "bono municipal"],
+  ["net profit margin", [12], "margen de utilidad neta"],
+  ["premium bond", [12], "bono con prima"],
+  ["price/earnings (P/E) ratio", [12], "relación precio/ganancias (P/E)"],
+  ["proxy", [12], "poder de representación"],
+  ["purchasing power risk", [12], "riesgo de poder adquisitivo"],
+  ["required rate of return", [12], "tasa de rendimiento requerida"],
+  ["residual owners", [12], "propietarios residuales"],
+  ["return on equity (ROE)", [12], "rendimiento sobre el capital (ROE)"],
+  ["revenue bond", [12], "bono de ingresos"],
+  ["risk-free rate of return", [12], "tasa de rendimiento libre de riesgo"],
+  ["serial obligation", [12], "obligación en serie"],
+  ["sinking fund", [12], "fondo de amortización"],
+  ["small-cap stock", [12], "acción de pequeña capitalización"],
+  ["speculative stock", [12], "acción especulativa"],
+  ["stock dividends", [12], "dividendos en acciones"],
+  ["tech stock", [12], "acción tecnológica"],
+  ["Treasury bond", [12], "bono del Tesoro"],
+  ["Treasury inflation-indexed bond", [12], "bono del Tesoro indexado a la inflación"],
+  ["yield to maturity", [12], "rendimiento al vencimiento"],
+  ["zero coupon bond", [12], "bono cupón cero"],
+  ["12b-1 fee", [13], "comisión 12b-1"],
+  ["alpha", [13], "alfa"],
+  ["automatic investment plan", [13], "plan de inversión automática"],
+  ["automatic reinvestment plan", [13], "plan de reinversión automática"],
+  ["back-end load", [13], "comisión de salida"],
+  ["closed-end investment company", [13], "sociedad de inversión cerrada"],
+  ["conversion (exchange) privileges", [13], "privilegios de conversión (intercambio)"],
+  ["exchange-traded fund (ETF)", [13], "fondo cotizado en bolsa (ETF)"],
+  ["expense ratio", [13], "índice de gastos"],
+  ["front-end load", [13], "comisión de entrada"],
+  ["general-purpose money fund", [13], "fondo monetario de uso general"],
+  ["government securities money fund", [13], "fondo monetario de valores gubernamentales"],
+  ["income (income-producing) property", [13], "propiedad generadora de ingresos"],
+  ["international fund", [13], "fondo internacional"],
+  ["load fund", [13], "fondo con comisión"],
+  ["low-load fund", [13], "fondo de comisión baja"],
+  ["management fee", [13], "comisión de administración"],
+  ["mutual fund", [13], "fondo mutuo"],
+  ["net asset value (NAV)", [13], "valor liquidativo (NAV)"],
+  ["no-load fund", [13], "fondo sin comisión"],
+  ["open-end investment company", [13], "sociedad de inversión abierta"],
+  ["pooled diversification", [13], "diversificación mancomunada"],
+  ["real estate investment trust (REIT)", [13], "fideicomiso de inversión en bienes raíces (REIT)"],
+  ["socially responsible fund (SRF) and environment, social, governance (ESG) fund", [13], "fondo socialmente responsable (SRF) y fondo ambiental, social y de gobernanza (ESG)"],
+  ["systematic withdrawal plan", [13], "plan de retiros sistemáticos"],
+  ["tax-exempt money fund", [13], "fondo monetario exento de impuestos"],
+  ["accumulation period", [14], "período de acumulación"],
+  ["annuity certain", [14], "anualidad cierta"],
+  ["cash-balance plan", [14], "plan de saldo en efectivo"],
+  ["contributory pension plan", [14], "plan de pensiones contributivo"],
+  ["deferred annuity", [14], "anualidad diferida"],
+  ["defined benefit plan", [14], "plan de beneficios definidos"],
+  ["distribution period", [14], "período de distribución"],
+  ["Employee Retirement Income Security Act (ERISA) fixed-rate annuity", [14], "Ley de Seguridad de Ingresos de Jubilación de los Empleados (ERISA); anualidad de tasa fija"],
+  ["guaranteed-minimum annuity (life annuity with refund)", [14], "anualidad de mínimo garantizado (anualidad vitalicia con reembolso)"],
+  ["immediate annuity", [14], "anualidad inmediata"],
+  ["individual retirement account (IRA)", [14], "cuenta individual de jubilación (IRA)"],
+  ["installment premium annuity contract", [14], "contrato de anualidad con primas a plazos"],
+  ["Keogh plan", [14], "plan Keogh"],
+  ["life annuity, period certain", [14], "anualidad vitalicia con período cierto"],
+  ["life annuity with no refund (pure life)", [14], "anualidad vitalicia sin reembolso (vida pura)"],
+  ["noncontributory pension plan", [14], "plan de pensiones no contributivo"],
+  ["modified adjusted gross income (MAGI)", [14], "ingreso bruto ajustado modificado (MAGI)"],
+  ["nondeductible (after-tax) IRA", [14], "IRA no deducible (después de impuestos)"],
+  ["non-qualified annuity", [14], "anualidad no calificada"],
+  ["pension protection act", [14], "Ley de Protección de Pensiones"],
+  ["profit-sharing plan", [14], "plan de participación en las ganancias"],
+  ["qualified annuity", [14], "anualidad calificada"],
+  ["qualified pension plan", [14], "plan de pensiones calificado"],
+  ["refund annuity", [14], "anualidad con reembolso"],
+  ["salary reduction, or 401(k), plan", [14], "plan de reducción salarial o 401(k)"],
+  ["single premium annuity contract", [14], "contrato de anualidad de prima única"],
+  ["survivorship benefit", [14], "beneficio de sobrevivencia"],
+  ["thrift and savings plans", [14], "planes de ahorro"],
+  ["traditional (deductible) IRA", [14], "IRA tradicional (deducible)"],
+  ["variable annuity", [14], "anualidad variable"],
+  ["vested rights", [14], "derechos adquiridos"],
+  ["administrator", [15], "administrador"],
+  ["annual exclusions", [15], "exclusiones anuales"],
+  ["applicable exclusion amount (AEA)", [15], "monto de exclusión aplicable (AEA)"],
+  ["beneficiaries", [15], "beneficiarios"],
+  ["codicil", [15], "codicilo"],
+  ["community property", [15], "bienes gananciales"],
+  ["durable power of attorney for financial matters", [15], "poder notarial duradero para asuntos financieros"],
+  ["durable power of attorney for health care", [15], "poder notarial duradero para atención médica"],
+  ["estate planning", [15], "planificación patrimonial"],
+  ["estate tax", [15], "impuesto sobre el patrimonio"],
+  ["ethical wills", [15], "testamentos éticos"],
+  ["executor", [15], "albacea"],
+  ["gift splitting", [15], "división de donaciones"],
+  ["gift tax", [15], "impuesto sobre donaciones"],
+  ["grantor", [15], "fideicomitente"],
+  ["gross estate", [15], "patrimonio bruto"],
+  ["intestacy", [15], "sucesión intestada"],
+  ["irrevocable life insurance trust", [15], "fideicomiso irrevocable de seguro de vida"],
+  ["irrevocable living trust", [15], "fideicomiso en vida irrevocable"],
+  ["joint tenancy", [15], "copropiedad conjunta"],
+  ["letter of last instructions", [15], "carta de últimas instrucciones"],
+  ["living (inter-vivos) trust", [15], "fideicomiso en vida (inter vivos)"],
+  ["living will", [15], "testamento vital"],
+  ["pour-over will", [15], "testamento de transferencia al fideicomiso"],
+  ["probate estate", [15], "patrimonio sujeto a sucesión"],
+  ["probate process", [15], "proceso sucesorio"],
+  ["revocable living trust", [15], "fideicomiso en vida revocable"],
+  ["right of survivorship", [15], "derecho de supervivencia"],
+  ["tenancy by the entirety", [15], "tenencia conyugal"],
+  ["tenancy in common", [15], "tenencia en común"],
+  ["testamentary trust", [15], "fideicomiso testamentario"],
+  ["testator", [15], "testador"],
+  ["trust", [15], "fideicomiso"],
+  ["trustee", [15], "fiduciario"],
+  ["unified rate schedule", [15], "tabla de tasas unificada"],
+  ["unified tax credit", [15], "crédito fiscal unificado"],
+  ["will", [15], "testamento"],
+];
+
+// ← The book's name. You can also rename it any time on the Book page (Manage cards → Edit);
+//   the rename is kept, because the book is recognised by its internal key, not its title.
+const BUS250_BOOK_TITLE = 'BUS250';
+const BUS250_BOOK_KEY   = 'bus250';
+
+const BUS250_CHAPTERS = BUS250_CHAPTER_HEADERS.map(h=>h.replace(/^Chapter\s*\d+\s*[-–—:]\s*/i,'').trim());
+function termKey(s){
+  return foldText(String(s??'').replace(/[’‘`´']/g,'')).replace(/[.,;:!?"]+$/,'').replace(/\s+/g,' ').trim();
 }
+const isAcronym = s => /^[A-Z0-9&\-\/.]{2,}s?$/.test(s);
+const BUS250_INDEX = new Map();   // termKey → [entry, ...]
+const BUS250_PHRASES = [];        // multi-word terms + acronyms, longest first (for YouTube titles)
+(function buildBus250Index(){
+  const seenPhrase=new Set();
+  for(const [term,chapters,es] of BUS250_TERMS){
+    const entry={term,chapters,es};
+    const keys=new Set([termKey(term), termKey(term.replace(/\s*\([^)]*\)\s*/g,' '))]);
+    const acronyms=(term.match(/\(([^)]+)\)/g)||[]).map(p=>p.slice(1,-1).trim()).filter(isAcronym);
+    if(isAcronym(term)) acronyms.push(term);
+    acronyms.forEach(a=>keys.add(termKey(a)));
+    for(const k of keys){
+      if(!k) continue;
+      const list=BUS250_INDEX.get(k)||[];
+      if(!list.includes(entry)) list.push(entry);
+      BUS250_INDEX.set(k,list);
+      const phraseOk = k.includes(' ') || acronyms.some(a=>termKey(a)===k);
+      if(phraseOk && !seenPhrase.has(k)){ seenPhrase.add(k); BUS250_PHRASES.push(k); }
+    }
+  }
+  BUS250_PHRASES.sort((a,b)=>b.length-a.length);
+})();
+
+// Returns an array of matching entries, or null.
+//  - exact match on the whole text first;
+//  - when `fromTitle` (a YouTube video title like "Payday Loan | ASL Business Signs"), also tries
+//    each " | " / " - " segment, then the longest multi-word term / acronym found as whole words.
+//    Single common words ("will", "trust", "peak") are never guessed from inside a longer title.
+function findBus250(text, fromTitle=false){
+  const k=termKey(text);
+  if(!k) return null;
+  if(BUS250_INDEX.has(k)) return BUS250_INDEX.get(k);
+  if(!fromTitle) return null;
+  for(const seg of String(text).split(/\s[|\-–—:•·]\s|\||\s[–—]\s/)){
+    const sk=termKey(seg);
+    if(sk && BUS250_INDEX.has(sk)) return BUS250_INDEX.get(sk);
+  }
+  const reEsc=s=>s.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+  for(const p of BUS250_PHRASES){
+    if(new RegExp('(^|[^a-z0-9])'+reEsc(p)+'($|[^a-z0-9])').test(k)) return BUS250_INDEX.get(p);
+  }
+  return null;
+}
+function bus250Chapters(hit){ return [...new Set(hit.flatMap(e=>e.chapters))].sort((a,b)=>a-b); }
 
 async function fetchYoutubeTitle(videoId){
   videoId=extractYtId(videoId);
@@ -6550,48 +7138,151 @@ async function fetchYoutubeTitle(videoId){
   }catch(e){ return ''; }
 }
 
-// Shared logic for both Topic and Category: match English name + YouTube
-// title against a keyword table, auto-create any matched value that isn't
-// a real option yet (same as clicking the "+" next to the field's label),
-// then select the matching chip(s). Skips fields that already have a
-// manual selection so it never overrides an admin's own choice.
-async function autoFillChipField(fieldKey, table, label){
+// Select the given values in a built-in chip field (topic / cat). Auto-creates any value that
+// isn't an option yet (same as the "+" button). Never touches a field the admin already filled.
+async function fillChipValues(fieldKey, values){
+  values=[...new Set(values.filter(Boolean))];
+  if(!values.length) return false;
   const chipsEl=document.getElementById('chips_'+fieldKey);
-  if(!chipsEl) return false;
-  if(chipsEl.querySelector('.ms-chip.on')) return false;
-
-  const nameText=document.getElementById('fEn').value;
-  const firstYtId=document.querySelector('#fVidHowList .vid-opt-input')?.value?.trim();
-  const ytTitle=firstYtId ? await fetchYoutubeTitle(firstYtId) : '';
-
-  const matched=guessFromKeywordTable(nameText+' '+ytTitle, table);
-  if(!matched.length) return false;
-
+  if(!chipsEl || chipsEl.querySelector('.ms-chip.on')) return false;
   const {arr,col}=builtinFieldByKey(fieldKey);
-  const missing=matched.filter(name=>!arr.some(x=>x.value===name));
-  for(const name of missing){
-    const newDoc=await addValue(col,name);
+  const missing=values.filter(v=>!arr.some(x=>x.value===v));
+  for(const v of missing){
+    const newDoc=await addValue(col,v);
     if(newDoc){ arr.push(newDoc); regeneratePublicSnapshot(); }
   }
   if(missing.length) buildModalFields(WORDS.find(x=>x.id===editingId)||{});
-
+  let any=false;
   document.getElementById('chips_'+fieldKey)?.querySelectorAll('.ms-chip').forEach(chip=>{
-    if(matched.includes(chip.textContent) && !chip.classList.contains('on')) chip.click();
+    if(values.includes(chip.textContent) && !chip.classList.contains('on')){ chip.click(); any=true; }
   });
-  showToast(`${label} auto-filled from keyword match — feel free to adjust`);
-  return true;
+  return any;
 }
 
-async function suggestTopicFromInputs(){
-  await autoFillChipField('topic', TOPIC_KEYWORDS, 'Topic');
+// ── Book: Book category → "BUS250" book cover → chapter cards → signs ──
+function bus250BookField(){
+  return CUSTOM_FIELDS.find(cf=>cf.type!=='paragraph' && /book|書|libro/i.test(cf.name||''));
 }
-async function suggestCategoryFromInputs(){
-  await autoFillChipField('cat', CATEGORY_KEYWORDS, 'Category');
+function findBus250Book(cf){
+  return booksOf(cf).find(b=>b.key===BUS250_BOOK_KEY) ||
+         booksOf(cf).find(b=>termKey(b.title).replace(/\s+/g,'')===BUS250_BOOK_KEY);
 }
+let _bus250BookBusy=null;
+async function ensureBus250Book(){
+  if(!isAdmin) return null;
+  const cf=bus250BookField(); if(!cf) return null;
+  const found=findBus250Book(cf);
+  if(found) return {cf,book:found};
+  if(_bus250BookBusy) return _bus250BookBusy;
+  _bus250BookBusy=(async()=>{
+    const list=booksOf(cf);
+    const book={id:'book_'+BUS250_BOOK_KEY, key:BUS250_BOOK_KEY, title:BUS250_BOOK_TITLE, cover:'', order:list.length};
+    const ok=await saveBooks(cf.id,[...list,book]);
+    return ok?{cf,book}:null;
+  })();
+  try{ return await _bus250BookBusy; } finally{ _bus250BookBusy=null; }
+}
+function chapterOptKey(v){ return termKey(String(v||'').replace(/^Chapter\s*\d+\s*[-–—:]\s*/i,'')); }
+async function fillBus250Book(chapters){
+  const res=await ensureBus250Book(); if(!res) return false;
+  const {cf,book}=res;
+  const chipsEl=document.getElementById('chips_cf_'+cf.id);
+  if(!chipsEl || chipsEl.querySelector('.ms-chip.on')) return false;
+  const wanted=[];
+  let changed=false;
+  for(const n of chapters){
+    const header=BUS250_CHAPTER_HEADERS[n-1], key=chapterOptKey(header);
+    const opts=CUSTOM_OPTIONS.filter(o=>o.fieldId===cf.id && chapterOptKey(o.value)===key);
+    let opt=opts.find(o=>o.bookId===book.id) || opts.find(o=>!o.bookId);
+    try{
+      if(!opt){
+        const data={fieldId:cf.id, value:header, bookId:book.id, order:n};
+        const ref=await addDoc(collection(db,'customFieldOptions'),data);
+        opt={id:ref.id,...data}; CUSTOM_OPTIONS.push(opt); changed=true;
+      } else if(!opt.bookId){
+        await setDoc(doc(db,'customFieldOptions',opt.id),{bookId:book.id},{merge:true});
+        opt.bookId=book.id; changed=true;
+      }
+    }catch(err){ console.error(err); continue; }
+    wanted.push(opt.value);
+  }
+  if(changed){ regeneratePublicSnapshot(); buildFilterPanel(); buildModalFields(WORDS.find(x=>x.id===editingId)||{}); }
+  const chips=[...(document.getElementById('chips_cf_'+cf.id)?.querySelectorAll('.ms-chip')||[])];
+  const single=cf.type==='singleselect';
+  let any=false;
+  for(const chip of chips){
+    if(wanted.includes(chip.textContent) && !chip.classList.contains('on')){ chip.click(); any=true; if(single) break; }
+  }
+  return any;
+}
+
+// Non-BUS250 words: only an EXACT keyword hit in the older tables (no more substring guessing).
+function exactKeywordLookup(text, table){
+  const k=termKey(text);
+  if(!k) return [];
+  return Object.keys(table).filter(name=>table[name].some(kw=>termKey(kw)===k));
+}
+
+async function suggestTopicFromInputs(){ await suggestFieldsFromInputs(); }
+async function suggestCategoryFromInputs(){ await suggestFieldsFromInputs(); }
+
+let _suggestRunning=false;
 async function suggestFieldsFromInputs(){
-  await suggestTopicFromInputs();
-  await suggestCategoryFromInputs();
-  suggestSpanishFromInputs();
+  if(_suggestRunning) return;
+  _suggestRunning=true;
+  try{
+    const name=document.getElementById('fEn')?.value.trim()||'';
+    let hit=findBus250(name);
+    if(!hit){
+      const firstYt=document.querySelector('#fVidHowList .vid-opt-input')?.value?.trim();
+      const ytTitle=firstYt ? await fetchYoutubeTitle(firstYt) : '';
+      if(ytTitle && !name) hit=findBus250(ytTitle,true);
+    }
+    const filled=[];
+    if(hit){
+      const chapters=bus250Chapters(hit);
+      const topics=chapters.map(n=>BUS250_CHAPTERS[n-1]);
+      const cats=topics.map(t=>CHAPTER_TO_CATEGORY[t]);
+      if(await fillChipValues('topic',topics)) filled.push('Topic');
+      if(await fillChipValues('cat',cats)) filled.push('Category');
+      if(await fillBus250Book(chapters)) filled.push('Book');
+    } else if(name){
+      if(await fillChipValues('topic',exactKeywordLookup(name,TOPIC_KEYWORDS))) filled.push('Topic');
+      if(await fillChipValues('cat',exactKeywordLookup(name,CATEGORY_KEYWORDS))) filled.push('Category');
+    }
+    if(await suggestSpanishFromInputs()) filled.push('Spanish');
+    if(filled.length) showToast(`${filled.join(', ')} auto-filled${hit?' from BUS250 glossary':''} — please check before saving`);
+  } finally { _suggestRunning=false; }
+}
+
+// Fills fEs only while it's still empty (never overwrites an admin's own text):
+//   1) BUS250 glossary  2) older business glossary  3) online machine translation (MyMemory).
+async function suggestSpanishFromInputs(){
+  const enEl=document.getElementById('fEn');
+  const esEl=document.getElementById('fEs');
+  if(!enEl || !esEl || esEl.value.trim()) return false;
+  const en=enEl.value.trim(); if(!en) return false;
+  const hit=findBus250(en);
+  let es=hit ? hit[0].es : '';
+  if(!es){
+    const key=en.toLowerCase().replace(/\s*\([^)]*\)\s*/g,' ').replace(/\s+/g,' ').trim();
+    es=BUSINESS_ES_GLOSSARY[key]||'';
+  }
+  if(!es){
+    try{
+      const q=en.toLowerCase();
+      const res=await fetch(`https://api.mymemory.translated.net/get?q=${encodeURIComponent(q)}&langpair=en|es`);
+      if(res.ok){
+        const data=await res.json();
+        const t=String(data?.responseData?.translatedText||'').trim();
+        if(t && !/MYMEMORY|QUERY LENGTH|INVALID/i.test(t) && t.toLowerCase()!==q) es=t.toLowerCase();
+      }
+    }catch(e){ /* offline / blocked → admin types it manually */ }
+    // The admin may have typed in the meantime — don't clobber it.
+    if(!es || esEl.value.trim() || enEl.value.trim()!==en) return false;
+  }
+  esEl.value=es;
+  return true;
 }
 
 document.getElementById('fEn')?.addEventListener('blur', suggestFieldsFromInputs);
@@ -6602,8 +7293,12 @@ document.getElementById('fVidHowList')?.addEventListener('focusout', async (e)=>
     const ytTitle=await fetchYoutubeTitle(videoId);
     const fEnEl=document.getElementById('fEn');
     if(ytTitle && fEnEl && !fEnEl.value.trim()){
-      fEnEl.value=ytTitle; // only fill if English name is still blank
-      window.checkSignDataMatch?.(); // re-run the same logic that normally fires on manual typing (letter-rule Handshape + signData lookup)
+      // Only fill if the English name is still blank. If the title contains a BUS250 term,
+      // use that exact term (e.g. "Payback Period | ASL" → "PAYBACK PERIOD").
+      const hit=findBus250(ytTitle,true);
+      const upper=ytTitle===ytTitle.toUpperCase();
+      fEnEl.value=hit ? (upper?hit[0].term.toUpperCase():hit[0].term) : ytTitle;
+      window.checkSignDataMatch?.();
     }
   }
   suggestFieldsFromInputs();
@@ -6811,6 +7506,7 @@ function getVidOptions(listId){
 }
 
 window.openAddModal=function(){
+  ensureBus250Book().catch(()=>{});
   editingId=null; editFormSpecial=[]; editFormValues={}; lastAutoLetterHand=null; signDataAutoHandValues=[]; selectedSignDataTokenIndex=null;
   document.getElementById('modalTitle').textContent='Add new sign';
   ['fEn','fEs','fDesc','fDescConcept','fDescExample'].forEach(id=>document.getElementById(id).value='');
@@ -6821,6 +7517,7 @@ window.openAddModal=function(){
 };
 
 window.openEditModal=function(id){
+  ensureBus250Book().catch(()=>{});
   const w=WORDS.find(x=>x.id===id); if(!w) return;
   editingId=id; editFormSpecial=[...(w.special||[])]; editFormValues={}; lastAutoLetterHand=null; signDataAutoHandValues=[];
   // Restore the previously-saved signData token choice (if any) so
