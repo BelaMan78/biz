@@ -4024,7 +4024,7 @@ window.renderCategoryOptionsPage=function(fieldId){
       return `<div class="topic-card manage-mode${hidden?' topic-card-empty':''}" draggable="true" data-cid="${opt.id}">
         <span class="topic-card-drag-handle"><i class="ti ti-grip-vertical"></i></span>
         <div class="topic-card-icon" style="background:${cc[0]};color:${cc[1]}"><i class="ti ${iconFor(opt.value)}"></i></div>
-        <div class="topic-card-name">${esc(opt.value)}</div>
+        <div class="topic-card-name">${esc(chapterCardLabel(opt,books))}</div>
         <div class="topic-card-count">${opt.count} sign${opt.count===1?'':'s'}</div>
         ${desc}${pending}
         ${bookPickerHtml(fieldId,opt,books)}
@@ -4036,7 +4036,7 @@ window.renderCategoryOptionsPage=function(fieldId){
     }
     return `<div class="topic-card" onclick="goToCategoryOption(${jsStr(fieldId)},${jsStr(opt.value)})">
       <div class="topic-card-icon" style="background:${cc[0]};color:${cc[1]}"><i class="ti ${iconFor(opt.value)}"></i></div>
-      <div class="topic-card-name">${esc(opt.value)}</div>
+      <div class="topic-card-name">${esc(chapterCardLabel(opt,books))}</div>
       <div class="topic-card-count">${opt.count} sign${opt.count===1?'':'s'}</div>
       ${desc}
     </div>`;
@@ -4044,6 +4044,21 @@ window.renderCategoryOptionsPage=function(fieldId){
   grid.innerHTML=chapterHeader+cards;
   if(catOptManageMode) wireCatOptDrag(fieldId);
 };
+
+// Inside a book, a chapter card drops the book name from its label, so every book shows
+// plain "Chapter 1, Chapter 2 …". The stored value stays unique (e.g. "BUS 250 Chapter 1")
+// so a sign in BUS 250's Chapter 1 never shows up in another book's Chapter 1.
+function chapterCardLabel(opt,books){
+  const bk=(books||[]).find(b=>b.id===opt.bookId);
+  const v=String(opt.value||'');
+  if(!bk || !bk.title) return v;
+  const t=bk.title.trim();
+  if(v.toLowerCase().startsWith(t.toLowerCase())){
+    const rest=v.slice(t.length).replace(/^[\s\-–—:|·•]+/,'');
+    if(rest) return rest;
+  }
+  return v;
+}
 
 function wireCatOptDrag(fieldId){
   const grid=document.getElementById('catOptGrid');
